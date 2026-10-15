@@ -906,7 +906,7 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
   const planRt = planFlightGuiActions({ from: '香港', to: '迪拜', date: '2026-12-06', backDate: '2026-12-13' })
   assert(planRt.some(a => a.t === 'clickTripTab' && a.trip === 'roundtrip') && planRt.some(a => a.t === 'setDate' && a.which === 'back'), '往返规划:往返 tab + 回程日期(不知 URL 形状也能搜)')
   const rb = planRt.find(a => a.t === 'readback')
-  assert(!!rb && rb.t === 'readback' && rb.expect.back === '2026-12-13', 'readback 期望含回程日期')
+  assert(!!rb && rb.t === 'readback' && rb.expect.legs[0]?.back === '2026-12-13', 'readback 期望含回程日期(legs 形状)')
 
   // 安全白名单:闭集外/提交件文本/非固定入口/坏日期/坏按键全拒
   assert(!assertGuiPlanSafe([{ t: 'goto', url: 'https://evil.example.com/' }]).ok, '安全闸:非固定入口 URL 拒绝')
@@ -927,8 +927,8 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
     { departDate: '/Date(1792166400000+0800)/', price: 1020 },
     { departDate: '/Date(1792252800000+0800)/', price: 760 },
   ] })
-  const makeFakeDriver = (opts: { apiBody?: string | null; calendarBody?: string | null; challenge?: boolean; formOverride?: Record<string, string>; listUrl?: string } = {}) => {
-    const state = { clickedSearch: false, form: { from: '', to: '', dep: '', back: '' } as Record<string, string> }
+  const makeFakeDriver = (opts: { apiBody?: string | null; afterLoginBody?: string; calendarBody?: string | null; challenge?: boolean; formOverride?: Record<string, string>; listUrl?: string; loginProbe?: boolean; loginResult?: boolean } = {}) => {
+    const state = { clickedSearch: false, drives: 0, form: { from: '', to: '', dep: '', back: '' } as Record<string, string> }
     const page: GuiPage = {
       async goto() {},
       async clickTripTab() {},
@@ -941,12 +941,16 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
       async cityFieldValues() { const f = { ...state.form, ...opts.formOverride }; return { from: f.from ?? '', to: f.to ?? '' } },
       async pageText() { return opts.challenge ? '请输入验证码 拖动滑块' : '机票预订' },
       async currentUrl() { return opts.listUrl ?? 'https://flights.ctrip.com/online/channel/domestic' },
+      async waitForHumanLogin() { return opts.loginResult ?? false },
       async waitForApiCapture() {
-        const itinerary = opts.apiBody === undefined
-          ? { url: 'https://flights.ctrip.com/international/search/api/search/batchSearch', body: FIXTURE }
-          : opts.apiBody ? { url: 'x', body: opts.apiBody } : null
-        const calendar = opts.calendarBody ? { url: 'https://m.ctrip.com/restapi/soa2/15380/bjjson/FlightIntlAndInlandLowestPriceSearch', body: opts.calendarBody } : null
-        return (itinerary || calendar) ? { ...(itinerary ? { itinerary } : {}), ...(calendar ? { calendar } : {}) } : null
+        state.drives += 1
+        const first = state.drives === 1
+        const itinerary = first
+          ? (opts.apiBody === undefined ? { url: 'https://flights.ctrip.com/international/search/api/search/batchSearch', body: FIXTURE } : opts.apiBody ? { url: 'x', body: opts.apiBody } : null)
+          : (opts.afterLoginBody ? { url: 'x', body: opts.afterLoginBody } : null)
+        const calendar = first && opts.calendarBody ? { url: 'https://m.ctrip.com/restapi/soa2/15380/bjjson/FlightIntlAndInlandLowestPriceSearch', body: opts.calendarBody } : null
+        const probe = first && opts.loginProbe ? { url: 'x', body: '{"data":null,"needUserLogin":true}' } : undefined
+        return (itinerary || calendar || probe) ? { ...(itinerary ? { itinerary } : {}), ...(calendar ? { calendar } : {}), ...(probe ? { loginProbe: probe } : {}) } : null
       },
     }
     return { driver: { open: async () => page, close: async () => {} }, state }
@@ -984,7 +988,7 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
   const cityDriver = makeFakeDriver({ formOverride: { from: '北京(BJS)' } }) // 城市打进别的框(live 实测形态)
   __setGuiDriverForTest(() => cityDriver.driver)
   const g2b = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
-  assert(g2b.ok === false && /出发城市框未确认/.test(g2b.error ?? '') && cityDriver.state.clickedSearch === false, 'readback 逐字段:城市框错位(全局框假阳)→ 终止', g2b)
+  assert(g2b.ok === false && /城市框未确认/.test(g2b.error ?? '') && cityDriver.state.clickedSearch === false, 'readback 逐字段:城市框错位(全局框假阳)→ 终止', g2b)
 
   __setGuiDriverForTest(() => makeFakeDriver({ challenge: true }).driver)
   const g3 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
@@ -1011,6 +1015,39 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
   const rtUrl = buildEntryUrl('香港', '迪拜', '2026-11-13', {}, '2026-11-17')
   assert(rtUrl.ok === true && rtUrl.url === 'https://flights.ctrip.com/online/list/round-hkg0-dxb0?depdate=2026-11-13_2026-11-17&cabin=y_s&adult=1&child=0&infant=0', '往返 URL=GUI 教师实证形状(round-{code}0)', rtUrl)
   __setGuiDriverForTest(null)
+
+// N. GUI 登录态配对 + 多程(2026-10-15,#661/#663/#664 余尾收口)
+{
+  console.log('N. 登录态配对(interactiveLogin)+ 多程规划')
+  // 多程规划:multi tab + 逐段(城市×2+日期)动作 + legs readback
+  const planMc = planFlightGuiActions({ from: '', to: '', date: '', legs: [
+    { from: '香港', to: '迪拜', date: '2026-12-06' },
+    { from: '迪拜', to: '上海', date: '2026-12-10' },
+  ] })
+  assert(planMc.some(a => a.t === 'clickTripTab' && a.trip === 'multi'), '多程规划:点 multi tab')
+  assert(planMc.filter(a => a.t === 'setDate').length === 2 && planMc.some(a => a.t === 'setDate' && a.seg === 2), '多程规划:逐段日期(seg 维度)')
+  assert(!assertGuiPlanSafe([{ t: 'typeCity', which: 'from', text: '香港', seg: 4 }]).ok, '安全闸:seg 闭集(1–3)外拒绝')
+
+  // 登录配对(机票):首驾只有日历+needUserLogin 探测 → 等人登录 → 重驾拿行程 → anonymous=false
+  const loginDriver = makeFakeDriver({ apiBody: null, calendarBody: CAL_FIXTURE, loginProbe: true, loginResult: true, afterLoginBody: FIXTURE })
+  __setGuiDriverForTest(() => loginDriver.driver)
+  const n1 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2026-11-13', interactiveLoginMs: 60_000 })
+  assert(n1.ok === true && (n1.options?.length ?? 0) === 1 && n1.anonymous === false, '登录配对(机票):探测→等人登录→重驾→行程明细 hit,anonymous=false', n1)
+  assert(/本人已在本窗口官方页登录/.test(n1.evidence), '登录态证据链标注')
+
+  // 登录等待超时:needs-login 终态(不冒充成功)
+  const timeoutDriver = makeFakeDriver({ apiBody: null, calendarBody: CAL_FIXTURE, loginProbe: true, loginResult: false })
+  __setGuiDriverForTest(() => timeoutDriver.driver)
+  const n2 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2026-11-13', interactiveLoginMs: 60_000 })
+  assert(n2.ok === false && n2.verdict === 'needs-login' && /登录等待超时/.test(n2.error ?? ''), '登录等待超时 → needs-login 终态', n2)
+
+  // 未授权等待(interactiveLoginMs 缺省):保持匿名日历面,不弹登录
+  const anonDriver = makeFakeDriver({ apiBody: null, calendarBody: CAL_FIXTURE, loginProbe: true })
+  __setGuiDriverForTest(() => anonDriver.driver)
+  const n3 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2026-11-13' })
+  assert(n3.ok === true && (n3.calendar?.length ?? 0) === 3 && n3.anonymous === true, '未授权等待:保持匿名日历面(默认行为不变)', n3)
+  __setGuiDriverForTest(null)
+}
 }
 
 // M. 携程酒店 GUI 车道(2026-10-14,#664 首片):规划/安全闸/readback/needs-login 边界
@@ -1041,6 +1078,7 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
       async destFieldValue() { return (opts.formOverride?.to ?? state.form.to) + '(测试)' },
       async pageText() { return '酒店预订' },
       async currentUrl() { return state.url },
+      async waitForHumanLogin() { return false },
       async waitForApiBody() {
         if (opts.passportAfterSearch) return null
         return opts.body === undefined ? { url: 'https://hotels.ctrip.com/hotels/api/list', body: HOTEL_FIXTURE } : opts.body ? { url: 'x', body: opts.body } : null
