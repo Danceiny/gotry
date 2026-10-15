@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page } from 'playwright-core'
 import { isSubmitText } from './read-guard.ts'
-import { NETWORK_HINTS, parseBatchSearchResult, type SessionFlightOption } from './adapters/ctrip-flight.ts'
+import { NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, type SessionFlightOption } from './adapters/ctrip-flight.ts'
 
 export const FLIGHT_GUI_HOME = 'https://flights.ctrip.com/'
 /**
@@ -43,17 +43,26 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/
 /** 挑战页特征(与桥车道同口径:验证/确认中文词) */
 const GUI_CHALLENGE_RE = /验证|校验|拖动滑块|请输入验证码/
 
-/** 动作闭集:GUI 车道能做的全部事情(检索设置面;无任何写语义) */
+/** 动作闭集:GUI 车道能做的全部事情(检索设置面;无任何写语义)。
+ * seg=多程行号(1–3;缺省 1)——2026-10-15 live 实测:多程表单为三行
+ * [出发地|目的地|出发日期],标签同名按第 N 次出现消歧,日期框只读无占位符按序取。 */
 export type GuiAction =
   | { t: 'goto'; url: string }
-  | { t: 'clickTripTab'; trip: 'oneway' | 'roundtrip' }
-  | { t: 'typeCity'; which: 'from' | 'to'; text: string }
-  | { t: 'pickSuggest'; which: 'from' | 'to'; text: string }
-  | { t: 'setDate'; which: 'dep' | 'back'; ymd: string }
+  | { t: 'clickTripTab'; trip: 'oneway' | 'roundtrip' | 'multi' }
+  | { t: 'typeCity'; which: 'from' | 'to'; text: string; seg?: number }
+  | { t: 'pickSuggest'; which: 'from' | 'to'; text: string; seg?: number }
+  | { t: 'setDate'; which: 'dep' | 'back'; ymd: string; seg?: number }
   | { t: 'press'; key: string }
-  | { t: 'readback'; expect: { from: string; to: string; dep: string; back?: string } }
+  | { t: 'readback'; expect: { legs: Array<{ from: string; to: string; date: string; back?: string }> } }
   | { t: 'clickSearch' }
   | { t: 'awaitApi' }
+
+export interface GuiFlightLeg {
+  from: string
+  to: string
+  /** YYYY-MM-DD */
+  date: string
+}
 
 export interface GuiFlightQuery {
   from: string
@@ -62,13 +71,42 @@ export interface GuiFlightQuery {
   date: string
   /** 存在即往返检索(回程日期) */
   backDate?: string
+  /** 多程(2–3 段;存在即多程检索,忽略 from/to/date/backDate 顶层字段) */
+  legs?: GuiFlightLeg[]
+  /** 登录态配对(2026-10-15,#661 余尾):needUserLogin 探测命中时,窗口导航到携程官方
+   * 登录页并等待用户本人在该窗口完成登录(cookie 只读名字,值即弃),随后自动重跑检索
+   * 拿登录态行程明细。gotry 永不经手密码/验证码/cookie 值——登录永远发生在官方页。 */
+  interactiveLoginMs?: number
   /** 总预算 ms(浏览器启动+SPA+检索),默认 90_000 */
   timeoutMs?: number
 }
 
 /** 纯函数:查询 → 动作序列(离线测试锚点;执行前必须过 assertGuiPlanSafe) */
 export function planFlightGuiActions(q: GuiFlightQuery): GuiAction[] {
-  const expect = { from: q.from, to: q.to, dep: q.date, ...(q.backDate ? { back: q.backDate } : {}) }
+  // 多程(2026-10-15 live 实测:三行 [出发地|目的地|出发日期],标签第 N 次出现消歧)
+  if (q.legs && q.legs.length >= 2) {
+    const actions: GuiAction[] = [
+      { t: 'goto', url: FLIGHT_GUI_HOME },
+      { t: 'clickTripTab', trip: 'multi' },
+    ]
+    q.legs.slice(0, 3).forEach((leg, i) => {
+      const seg = i + 1
+      actions.push(
+        { t: 'typeCity', which: 'from', text: leg.from, seg },
+        { t: 'pickSuggest', which: 'from', text: leg.from, seg },
+        { t: 'typeCity', which: 'to', text: leg.to, seg },
+        { t: 'pickSuggest', which: 'to', text: leg.to, seg },
+        { t: 'setDate', which: 'dep', ymd: leg.date, seg },
+      )
+    })
+    actions.push(
+      { t: 'press', key: 'Escape' },
+      { t: 'readback', expect: { legs: q.legs.slice(0, 3).map(l => ({ from: l.from, to: l.to, date: l.date })) } },
+      { t: 'clickSearch' },
+      { t: 'awaitApi' },
+    )
+    return actions
+  }
   // live 校准(2026-10-14 pre-search 截图):该表单默认即「往返」态(双日期框预填)——
   // 单程必须显式点「单程」,否则按非法日期对(回<去)搜索且日历面板挂在回程框上。
   const tripTab: GuiAction[] = [{ t: 'clickTripTab', trip: q.backDate ? 'roundtrip' : 'oneway' }]
@@ -83,7 +121,7 @@ export function planFlightGuiActions(q: GuiFlightQuery): GuiAction[] {
     { t: 'setDate', which: 'dep', ymd: q.date },
     ...backDate,
     { t: 'press', key: 'Escape' },
-    { t: 'readback', expect },
+    { t: 'readback', expect: { legs: [{ from: q.from, to: q.to, date: q.date, ...(q.backDate ? { back: q.backDate } : {}) }] } },
     { t: 'clickSearch' },
     { t: 'awaitApi' },
   ]
@@ -100,7 +138,7 @@ export function assertGuiPlanSafe(plan: GuiAction[]): { ok: true } | { ok: false
         if (a.url !== FLIGHT_GUI_HOME) return { ok: false, error: `GUI 车道只允许固定入口 ${FLIGHT_GUI_HOME},拒绝 ${a.url}` }
         break
       case 'clickTripTab':
-        if (a.trip !== 'oneway' && a.trip !== 'roundtrip') return { ok: false, error: `trip 闭集外:${a.trip}` }
+        if (a.trip !== 'oneway' && a.trip !== 'roundtrip' && a.trip !== 'multi') return { ok: false, error: `trip 闭集外:${a.trip}` }
         break
       case 'typeCity':
       case 'pickSuggest': {
@@ -108,11 +146,13 @@ export function assertGuiPlanSafe(plan: GuiAction[]): { ok: true } | { ok: false
         if (!text || text.length > 24) return { ok: false, error: `城市文本非法(空/超长):${text.slice(0, 30)}` }
         if (isSubmitText(text)) return { ok: false, error: `城市位出现提交件文本,拒绝:${text}` }
         if (a.which !== 'from' && a.which !== 'to') return { ok: false, error: `which 闭集外:${a.which}` }
+        if (a.seg !== undefined && (![1, 2, 3].includes(a.seg))) return { ok: false, error: `seg 闭集外:${a.seg}` }
         break
       }
       case 'setDate':
         if (!YMD.test(a.ymd)) return { ok: false, error: `日期需 YYYY-MM-DD,实际 ${a.ymd}` }
         if (a.which !== 'dep' && a.which !== 'back') return { ok: false, error: `which 闭集外:${a.which}` }
+        if (a.seg !== undefined && (![1, 2, 3].includes(a.seg))) return { ok: false, error: `seg 闭集外:${a.seg}` }
         break
       case 'press':
         if (a.key !== 'Escape' && a.key !== 'Enter') return { ok: false, error: `按键白名单只接受 Escape/Enter,拒绝 ${a.key}` }
@@ -120,8 +160,13 @@ export function assertGuiPlanSafe(plan: GuiAction[]): { ok: true } | { ok: false
       case 'clickSearch':
         break // 「搜索」是本车道唯一允许的按钮;提交件黑名单语义(下单/支付)不在其列
       case 'readback':
-        for (const v of [a.expect.from, a.expect.to, a.expect.dep, a.expect.back]) {
-          if (v !== undefined && (!v.trim() || v.length > 24)) return { ok: false, error: `readback 期望值非法:${v}` }
+        if (!Array.isArray(a.expect.legs) || a.expect.legs.length < 1 || a.expect.legs.length > 3) {
+          return { ok: false, error: 'readback legs 须 1–3 段' }
+        }
+        for (const leg of a.expect.legs) {
+          for (const v of [leg.from, leg.to, leg.date, leg.back]) {
+            if (v !== undefined && (!v.trim() || v.length > 24)) return { ok: false, error: `readback 期望值非法:${v}` }
+          }
         }
         break
       case 'awaitApi':
@@ -137,20 +182,23 @@ export function assertGuiPlanSafe(plan: GuiAction[]): { ok: true } | { ok: false
 
 export interface GuiPage {
   goto(url: string): Promise<void>
-  /** 点行程 tab(单程/往返);找不到=表单改版,fail-closed */
-  clickTripTab(trip: 'oneway' | 'roundtrip'): Promise<void>
-  /** 城市框逐键打字(触发站点自动补全);站点内部定位输入框 */
-  typeCity(which: 'from' | 'to', text: string): Promise<void>
+  /** 点行程 tab(单程/往返/多程);找不到=表单改版,fail-closed */
+  clickTripTab(trip: 'oneway' | 'roundtrip' | 'multi'): Promise<void>
+  /** 城市框逐键打字(触发站点自动补全);seg=多程行号(1–3,缺省 1) */
+  typeCity(which: 'from' | 'to', text: string, seg?: number): Promise<void>
   /** 选自动补全首项并验证归一化(形如 上海(SHA);未选中即重试一次,仍失败抛错) */
-  pickSuggest(which: 'from' | 'to', text: string): Promise<void>
-  /** 日期设值:输入框可打字则打字,否则点日历单元格(aria/title/文本含目标日期);正确性由 readback 兜底 */
-  setDate(which: 'dep' | 'back', ymd: string): Promise<void>
+  pickSuggest(which: 'from' | 'to', text: string, seg?: number): Promise<void>
+  /** 日期设值:输入框可打字则打字,否则点日历单元格;seg=多程行号;正确性由 readback 兜底 */
+  setDate(which: 'dep' | 'back', ymd: string, seg?: number): Promise<void>
   press(key: string): Promise<void>
   clickSearch(): Promise<void>
   /** 读回当前表单全部输入的值+占位符(readback 硬闸的数据面) */
   visibleFormText(): Promise<string>
-  /** 出发/到达城市框当前值(逐字段核对;防全局搜索框文本假阳) */
-  cityFieldValues(): Promise<{ from: string; to: string }>
+  /** 出发/到达城市框当前值(逐字段核对;seg=多程行号) */
+  cityFieldValues(seg?: number): Promise<{ from: string; to: string }>
+  /** 登录态配对:窗口导航到携程官方登录页,等用户本人完成登录。
+   * 只轮询登录票据 cookie 的名字(值即弃,红线);超时返回 false。 */
+  waitForHumanLogin(timeoutMs: number): Promise<boolean>
   /** 挑战页检测(title+页面前 3KB 文本) */
   pageText(): Promise<string>
   /** 当前页 URL(#663 URL 教师:GUI 检索后回传 list 页真实形状) */
@@ -161,10 +209,12 @@ export interface GuiPage {
   recentApiUrls?(): Promise<string[]>
 }
 
-/** 双槽捕获:itinerary=含 flightItineraryList 的 batchSearch;calendar=低价日历(匿名可用) */
+/** 双槽捕获:itinerary=含 flightItineraryList 的 batchSearch;calendar=低价日历(匿名可用);
+ * loginProbe=needUserLogin 配置探测(登录态配对触发信号)。 */
 export interface GuiApiCapture {
   itinerary?: { url: string; body: string }
   calendar?: { url: string; body: string }
+  loginProbe?: { url: string; body: string }
 }
 
 /** 低价日历单日条目(parser 按实测形状产出;绝不发明价格) */
@@ -179,7 +229,7 @@ export interface GuiDriver {
   close(): Promise<void>
 }
 
-export type GuiFlightVerdict = 'hit' | 'miss' | 'error' | 'challenged'
+export type GuiFlightVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'needs-login'
 
 export interface GuiFlightResult {
   ok: boolean
@@ -193,9 +243,9 @@ export interface GuiFlightResult {
   /** 检索后站点自己落到的 list 页 URL(#663 URL 教师:真实形状回传,不猜) */
   listUrl?: string
   error?: string
-  /** 匿名公开面:显式标注,不冒充登录态价格 */
-  anonymous: true
-  trip: 'oneway' | 'roundtrip'
+  /** 匿名公开面=显式标注;登录态配对后为 false(用户本人在 GUI 窗口官方页完成登录) */
+  anonymous: boolean
+  trip: 'oneway' | 'roundtrip' | 'multi'
 }
 
 /** 测试注入 seam(__setTrainSessionTransportForTest 同款) */
@@ -211,8 +261,9 @@ export function __setGuiDriverForTest(factory: (() => GuiDriver) | null): void {
 export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
-  const trip: 'oneway' | 'roundtrip' = q.backDate ? 'roundtrip' : 'oneway'
-  const base = { anonymous: true as const, trip }
+  const trip: 'oneway' | 'roundtrip' | 'multi' = q.legs && q.legs.length >= 2 ? 'multi' : q.backDate ? 'roundtrip' : 'oneway'
+  let humanLoggedIn = false
+  const base = { get anonymous() { return !humanLoggedIn }, trip }
   const fail = (error: string, verdict: GuiFlightVerdict = 'error'): GuiFlightResult => ({
     ok: false, via: 'session-ctrip-flight-gui-error', latencyMs: Date.now() - started, verdict, error,
     evidence: `[会话:ctrip-flight-gui@error@${ts}] ${error.slice(0, 120)}`, ...base,
@@ -230,46 +281,45 @@ export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightRe
     page = await withDeadline(driver.open(), Math.min(budget, 30_000), 'GUI 浏览器窗口启动失败/超时(本机需已装 Chrome)')
   } catch (e) {
     await driver.close().catch(() => {})
-    return fail((e as Error).message.slice(0, 1200))
+    return fail((e as Error).message.slice(0, 500))
   }
 
   let apiBody: GuiApiCapture | null = null
   let listUrl = ''
-  try {
+  /** 流程性失败(硬闸/挑战页/超时)以结果对象抛出,由外层统一返回 */
+  class GuiFlowAbort { constructor(public result: GuiFlightResult) {} }
+
+  /** 单次驾驶:整计划走到结果回包,返回捕获 */
+  const driveOnce = async (): Promise<GuiApiCapture | null> => {
+    let localCapture: GuiApiCapture | null = null
     for (const a of plan) {
       const remain = budget - (Date.now() - started)
-      if (remain <= 0) return fail(`GUI 预算耗尽(${budget}ms)`)
+      if (remain <= 0) throw new GuiFlowAbort(fail(`GUI 预算耗尽(${budget}ms)`))
       const step = <T,>(p: Promise<T>, what: string): Promise<T> =>
         withDeadline(p, Math.min(remain, 20_000), `GUI 步骤失败(${what})`)
       switch (a.t) {
         case 'goto': await step(page.goto(a.url), '打开携程机票首页'); break
-        case 'clickTripTab': await step(page.clickTripTab(a.trip), a.trip === 'roundtrip' ? '切换往返' : '切换单程'); break
-        case 'typeCity': await step(page.typeCity(a.which, a.text), `填写${a.which === 'from' ? '出发' : '到达'}城市`); break
+        case 'clickTripTab': await step(page.clickTripTab(a.trip), `切换${a.trip === 'roundtrip' ? '往返' : a.trip === 'multi' ? '多程' : '单程'}`); break
+        case 'typeCity': await step(page.typeCity(a.which, a.text, a.seg ?? 1), `填写第${a.seg ?? 1}段${a.which === 'from' ? '出发' : '到达'}城市`); break
         case 'pickSuggest':
-          await step(page.pickSuggest(a.which, a.text), '选择城市自动补全项')
-          if (a.which === 'to') trace.push(`after to-pick: ${JSON.stringify(await page.cityFieldValues().catch(() => ({})))}`)
+          await step(page.pickSuggest(a.which, a.text, a.seg ?? 1), '选择城市自动补全项')
+          if (a.which === 'to' && (a.seg ?? 1) === 1) trace.push(`after to-pick: ${JSON.stringify(await page.cityFieldValues(1).catch(() => ({})))}`)
           break
-        case 'setDate': await step(page.setDate(a.which, a.ymd), `设置${a.which === 'dep' ? '去程' : '回程'}日期`); break
+        case 'setDate': await step(page.setDate(a.which, a.ymd, a.seg ?? 1), `设置第${a.seg ?? 1}段${a.which === 'dep' ? '去程' : '回程'}日期`); break
         case 'press': await step(page.press(a.key), `按键 ${a.key}`); break
         case 'clickSearch': await step(page.clickSearch(), '点击搜索'); break
         case 'readback': {
-          // 城市:逐字段核对出发/到达框(占位符同名的全局搜索框/相邻框文本不再能假阳)
-          const cities = await step(page.cityFieldValues(), '读回城市框')
           const form = await step(page.visibleFormText(), '读回表单')
-          const cityChecks: Array<[string, string, string]> = [
-            ['出发城市', cities.from, a.expect.from], ['到达城市', cities.to, a.expect.to],
-          ]
-          for (const [label, actual, value] of cityChecks) {
-            if (!actual.includes(value)) {
-              return fail(`readback 硬闸:${label}框未确认「${value}」(实际「${actual.slice(0, 30)}」;表单摘要:${form.slice(0, 100)})——已终止,未发起搜索`)
+          for (const [i, leg] of a.expect.legs.entries()) {
+            const cities = await step(page.cityFieldValues(i + 1), `读回第${i + 1}段城市框`)
+            if (!cities.from.includes(leg.from) || !cities.to.includes(leg.to)) {
+              throw new GuiFlowAbort(fail(`readback 硬闸:第${i + 1}段城市框未确认「${leg.from}/${leg.to}」(实际「${cities.from.slice(0, 20)}/${cities.to.slice(0, 20)}」;表单摘要:${form.slice(0, 100)})——已终止,未发起搜索`))
             }
-          }
-          const dateChecks: Array<[string, string]> = [
-            ['去程日期', a.expect.dep], ...(a.expect.back ? [['回程日期', a.expect.back] as [string, string]] : []),
-          ]
-          for (const [label, value] of dateChecks) {
-            if (!form.includes(value)) {
-              return fail(`readback 硬闸:${label}「${value}」未在表单确认(表单摘要:${form.slice(0, 120)})——已终止,未发起搜索`)
+            if (!form.includes(leg.date)) {
+              throw new GuiFlowAbort(fail(`readback 硬闸:第${i + 1}段日期「${leg.date}」未在表单确认(表单摘要:${form.slice(0, 120)})——已终止,未发起搜索`))
+            }
+            if (leg.back && !form.includes(leg.back)) {
+              throw new GuiFlowAbort(fail(`readback 硬闸:回程日期「${leg.back}」未在表单确认——已终止,未发起搜索`))
             }
           }
           break
@@ -277,19 +327,36 @@ export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightRe
         case 'awaitApi': {
           const text = await step(page.pageText(), '检查页面')
           if (GUI_CHALLENGE_RE.test(text)) {
-            return fail('风控/验证码命中;按红线不重试不绕过,交还用户', 'challenged')
+            throw new GuiFlowAbort(fail('风控/验证码命中;按红线不重试不绕过,交还用户', 'challenged'))
           }
-          apiBody = await step(page.waitForApiCapture(Math.min(remain - 500, 18_000)), '等待结果回包(batchSearch/低价日历)')
-          if (!apiBody || (!apiBody.itinerary && !apiBody.calendar)) {
+          localCapture = await step(page.waitForApiCapture(Math.min(remain - 500, 18_000)), '等待结果回包(batchSearch/低价日历)')
+          if (!localCapture || (!localCapture.itinerary && !localCapture.calendar)) {
             const recent = page.recentApiUrls ? (await page.recentApiUrls().catch(() => [])) : []
-            return fail(`结果回包嗅探超时:batchSearch(行程)与低价日历均未收到;本次检索未完成${recent.length ? ` ‖recent-apis: ${recent.slice(-8).join(' ; ').slice(0, 600)}` : ''}`)
+            throw new GuiFlowAbort(fail(`结果回包嗅探超时:batchSearch(行程)与低价日历均未收到;本次检索未完成${recent.length ? ` ‖recent-apis: ${recent.slice(-8).join(' ; ').slice(0, 600)}` : ''}`))
           }
           break
         }
       }
     }
+    return localCapture
+  }
+
+  try {
+    apiBody = await driveOnce()
+    // 登录态配对(#661 余尾,2026-10-15):匿名探测(needUserLogin)命中且调用方授权等待时,
+    // 窗口停在携程官方登录页等用户本人完成登录(cookie 只读名字),随后原窗重驾一次拿登录态明细。
+    if (q.interactiveLoginMs && q.interactiveLoginMs > 0 && apiBody?.loginProbe && !apiBody.itinerary) {
+      const loggedIn = await withDeadline(page.waitForHumanLogin(q.interactiveLoginMs), q.interactiveLoginMs + 5_000, '等待人工登录')
+      if (!loggedIn) {
+        return fail(`登录等待超时(${q.interactiveLoginMs}ms):用户未在 GUI 窗口完成登录——本次未取得登录态行程;可稍后带 interactiveLogin 重试或用匿名日历面`, 'needs-login')
+      }
+      humanLoggedIn = true
+      trace.push('human-login ok; re-drive')
+      apiBody = await driveOnce()
+    }
     listUrl = await page.currentUrl().catch(() => '')
   } catch (e) {
+    if (e instanceof GuiFlowAbort) return e.result
     return fail(`${(e as Error).message.slice(0, 500)}${trace.length ? ` ‖trace: ${trace.join(' ; ').slice(0, 400)}` : ''}`)
   } finally {
     await driver.close().catch(() => {})
@@ -309,7 +376,7 @@ export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightRe
       ...(verdict === 'hit' ? { options: parsed.options } : {}),
       ...(calendar && calendar.length > 0 ? { calendar } : {}),
       ...(listUrl ? { listUrl } : {}),
-      evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} 匿名 GUI 面检索:${parsed.options.length} 条(transport=gui shape=${parsed.shape}${calendar?.length ? `;calendar=${calendar.length}天` : ''})`,
+      evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} GUI 面检索:${parsed.options.length} 条(transport=gui shape=${parsed.shape}${calendar?.length ? `;calendar=${calendar.length}天` : ''};${humanLoggedIn ? '用户本人已在本窗口官方页登录,登录态真实数据' : '匿名公开面'})`,
       ...base,
     }
   }
@@ -321,7 +388,7 @@ export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightRe
     return {
       ok: true, via: 'session-ctrip-flight-gui', latencyMs: Date.now() - started, verdict: 'hit',
       calendar, ...(listUrl ? { listUrl } : {}),
-      evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} 匿名 GUI 面·低价日历:${calendar.length} 天(行程明细需登录态,见 #661;日历为匿名公开价)`,
+      evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} 匿名 GUI 面·低价日历:${calendar.length} 天(行程明细需登录态:interactiveLogin=true 可在窗口内本人登录后自动重查)`,
       ...base,
     }
   }
@@ -423,7 +490,7 @@ const CITY_INPUT_IDX_FROM_LEAVES = (which: 'from' | 'to'): string => `(() => {
   const leaves = Array.from(document.querySelectorAll('*'))
     .filter(e => e.offsetParent && e.children.length === 0)
   const isCityInput = (e) => e.tagName === 'INPUT'
-    && /城市|机场/.test(e.placeholder || '') && !/旅游|搜索/.test(e.placeholder || '')
+    && (!e.placeholder || /城市|机场/.test(e.placeholder)) && !/旅游|搜索|请输入/.test(e.placeholder || '')
   const inputs = leaves.map((e, i) => ({ e, i })).filter(({ e }) => isCityInput(e))
   const visibleInputs = Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent)
   const nearest = (label) => {
@@ -443,27 +510,58 @@ const CITY_INPUT_IDX_FROM_LEAVES = (which: 'from' | 'to'): string => `(() => {
   }
   return nearest(${which === 'from' ? "'出发地'" : "'目的地'"}) })()`
 const CITY_INPUT_IDX = CITY_INPUT_IDX_FROM_LEAVES
-/** 城市框当前值(出发/到达各自;readback 逐字段核对用,防全局搜索框文本假阳) */
-const CITY_FIELD_VALUES = `(() => {
+/** 多程行定位(live 实测 2026-10-15):三行 [出发地|目的地|出发日期],标签同名——
+ * 「出发地/目的地」第 N 次出现(occurrence)的 ±10 叶子窗口内城市输入框即第 N 段框。 */
+const CITY_INPUT_IDX_N = (which: 'from' | 'to', occurrence: number): string => `(() => {
   const leaves = Array.from(document.querySelectorAll('*'))
     .filter(e => e.offsetParent && e.children.length === 0)
   const isCityInput = (e) => e.tagName === 'INPUT'
-    && /城市|机场/.test(e.placeholder || '') && !/旅游|搜索/.test(e.placeholder || '')
+    && (!e.placeholder || /城市|机场/.test(e.placeholder)) && !/旅游|搜索|请输入/.test(e.placeholder || '')
   const inputs = leaves.map((e, i) => ({ e, i })).filter(({ e }) => isCityInput(e))
-  const nearest = (label) => {
-    let li = -1
+  const visibleInputs = Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent)
+  const label = ${which === 'from'} ? '出发地' : '目的地'
+  const yOf = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2 }
+  let seen = 0
+  for (let li = 0; li < leaves.length; li += 1) {
+    if ((leaves[li].textContent || '').trim() !== label) continue
+    seen += 1
+    if (seen !== ${occurrence}) continue
+    const ly = yOf(leaves[li])
+    let best = -1, bestDist = 99
+    for (const inp of inputs) {
+      const d = Math.abs(inp.i - li)
+      // 同行 y 对齐(±60px):防止上一行已物化框抢亲(多程行惰性物化,live 实测)
+      if (d < bestDist && d <= 10 && Math.abs(yOf(inp.e) - ly) <= 60) { best = inp.i; bestDist = d }
+    }
+    if (best >= 0) return visibleInputs.indexOf(leaves[best])
+  }
+  return -1 })()`
+/** 城市框当前值(出发/到达各自;readback 逐字段核对用,防全局搜索框文本假阳) */
+const CITY_FIELD_VALUES_FN = (occurrence?: number): string => `(() => {
+  const leaves = Array.from(document.querySelectorAll('*'))
+    .filter(e => e.offsetParent && e.children.length === 0)
+  const isCityInput = (e) => e.tagName === 'INPUT'
+    && (!e.placeholder || /城市|机场/.test(e.placeholder)) && !/旅游|搜索|请输入/.test(e.placeholder || '')
+  const inputs = leaves.map((e, i) => ({ e, i })).filter(({ e }) => isCityInput(e))
+  const nearest = (label, occurrence) => {
+    let li = -1, seen = 0
     for (let i = 0; i < leaves.length; i += 1) {
-      if ((leaves[i].textContent || '').trim() === label) { li = i; break }
+      if ((leaves[i].textContent || '').trim() === label) {
+        seen += 1
+        if (seen === (occurrence || 1)) { li = i; break }
+      }
     }
     if (li < 0) return null
+    const yOf = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2 }
+    const ly = yOf(leaves[li])
     let best = null, bestDist = 99
     for (const inp of inputs) {
       const d = Math.abs(inp.i - li)
-      if (d < bestDist && d <= 10) { best = inp; bestDist = d }
+      if (d < bestDist && d <= 10 && Math.abs(yOf(inp.e) - ly) <= 60) { best = inp; bestDist = d }
     }
     return best
   }
-  const f = nearest('出发地'), t = nearest('目的地')
+  const f = nearest('出发地', ${occurrence ?? 1}), t = nearest('目的地', ${occurrence ?? 1})
   return JSON.stringify({ from: f ? (f.e.value || '') : '', to: t ? (t.e.value || '') : '' }) })()`
 /** 日期框定位(live 校准:只读,占位 yyyy-mm-dd;往返时第二个) */
 const DATE_INPUT_IDX = (which: 'dep' | 'back'): string => `(() => { const els = Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent)
@@ -472,11 +570,45 @@ const DATE_INPUT_IDX = (which: 'dep' | 'back'): string => `(() => { const els = 
   const back = ${which === 'back'}
   if (hits.length >= (back ? 2 : 1)) return hits[back ? 1 : 0].i
   return els.length - 1 })()`
+/** 多程日期框(live 实测 2026-10-15:只读无占位符,按序=第 N 个只读空占位输入) */
+const DATE_INPUT_IDX_SEG = (seg: number): string => `(() => { const els = Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent)
+  const dates = els.map((e, i) => ({ i, ro: e.readOnly, ph: e.placeholder || '' }))
+    .filter(x => (x.ro && !x.ph) || /日期|date/i.test(x.ph))
+  const idx = ${seg} - 1
+  return dates.length > idx ? dates[idx].i : -1 })()`
+/** 多程段就绪谓词:第 N 个「出发地」标签 ±6 叶子内出现城市输入框(行惰性物化,live 实测 2026-10-15) */
+const SEG_READY = (occurrence: number): string => `(() => {
+  const leaves = Array.from(document.querySelectorAll('*')).filter(e => e.offsetParent && e.children.length === 0)
+  let seen = 0
+  for (let li = 0; li < leaves.length; li += 1) {
+    if ((leaves[li].textContent || '').trim() !== '出发地') continue
+    seen += 1
+    if (seen !== ${occurrence}) continue
+    return leaves.some((e, i) => Math.abs(i - li) <= 6 && e.tagName === 'INPUT'
+      && (!e.placeholder || /城市|机场/.test(e.placeholder || '')) && !/旅游|搜索|请输入/.test(e.placeholder || ''))
+  }
+  return false })()`
+/** 点击第 N 个行标签(出发地/目的地;行惰性物化的物化触发) */
+const CLICK_SEG_LABEL = (label: '出发地' | '目的地', occurrence: number): string => `(() => {
+  const leaves = Array.from(document.querySelectorAll('*')).filter(e => e.offsetParent && e.children.length === 0)
+  let seen = 0
+  for (const e of leaves) {
+    if ((e.textContent || '').trim() !== '${label}') continue
+    seen += 1
+    if (seen === ${occurrence}) { (e.parentElement || e).click(); return true }
+  }
+  return false })()`
+
 /** 表单内搜索按钮(live 校准:按钮是无语义 div,文本「搜索」为精确叶子;全局搜索框旁
  *  也有「搜索」——只在日期框 8 层祖先窗口内找,绝不全局兜底) */
 const CLICK_FORM_SEARCH = `(() => {
   const els = Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent)
-  const dateEl = els.find(e => /y{2,4}[-/]m{1,2}|日期|date/i.test(e.placeholder || '') || /^\\d{4}-\\d{2}-\\d{2}/.test(e.value || ''))
+  const dateEls = els.filter(e => /y{2,4}[-/]m{1,2}|日期|date/i.test(e.placeholder || '')
+    || (!e.placeholder && e.readOnly) || /^\d{4}-\d{2}-\d{2}/.test(e.value || ''))
+  // 多程(live 实测 2026-10-15):行堆叠,搜索按钮在末行右/下方——锚=最底部日期框
+  const dateEl = dateEls.length
+    ? dateEls.reduce((a, b) => ((a.getBoundingClientRect().top >= b.getBoundingClientRect().top) ? a : b))
+    : undefined
   if (!dateEl) throw new Error('搜索按钮定位失败:日期框不存在')
   const click = (el) => {
     let target = el
@@ -504,18 +636,44 @@ const CLICK_FORM_SEARCH = `(() => {
     const cx = r.left + r.width / 2
     const cy = r.top + r.height / 2
     if (cx >= dateRect.right - 20 && cx <= dateRect.right + 500
-      && cy >= dateRect.top - 60 && cy <= dateRect.bottom + 120) {
+      && cy >= dateRect.top - 320 && cy <= dateRect.bottom + 400) {
       const d = Math.abs(cy - (dateRect.top + dateRect.height / 2)) + (cx - dateRect.right) * 0.2
       if (d < rowDist) { rowBtn = e; rowDist = d }
     }
-    if (cy >= dateRect.bottom && cy <= dateRect.bottom + 250
-      && cx >= dateRect.left - 80 && cx <= dateRect.right + 200) {
+    if (cy >= dateRect.bottom && cy <= dateRect.bottom + 400
+      && cx >= dateRect.left - 80 && cx <= dateRect.right + 420) {
       const d = cy - dateRect.bottom
       if (d < belowDist) { belowBtn = e; belowDist = d }
     }
   }
   const best = rowBtn || belowBtn
   if (best) return click(best)
+  // 兜底(live 实测 2026-10-15 多程):按钮=右侧蓝色「搜索」大块,若指针游标不在本体上,
+  // 按右半区的「搜索」精确叶子点其可点祖先。
+  const searchLeaf = Array.from(document.querySelectorAll('*'))
+    .find(e => e.children.length === 0 && (e.textContent || '').trim() === '搜索' && e.offsetParent
+      && e.getBoundingClientRect().left > dateRect.left)
+  if (searchLeaf) return click(searchLeaf)
+  // 终极兜底(live 截图实证 2026-10-15 多程:按钮=表单右侧蓝色圆角大块):蓝色主导背景
+  // 且 ≥80×80、位于表单纵向范围内 → 点击(白字「搜索」可能在非叶子嵌套里,不依赖文本)。
+  const top = dateEls.reduce((m, e) => Math.min(m, e.getBoundingClientRect().top), 1e9)
+  const bottom = dateEls.reduce((m, e) => Math.max(m, e.getBoundingClientRect().bottom), -1e9)
+  let blue = null, blueArea = 0
+  for (const e of Array.from(document.querySelectorAll('*'))) {
+    if (!e.offsetParent) continue
+    const r = e.getBoundingClientRect()
+    if (r.width < 80 || r.height < 80 || r.width > 360) continue
+    const cy = r.top + r.height / 2
+    if (cy < top - 200 || cy > bottom + 300) continue
+    const bgNums = getComputedStyle(e).backgroundColor.replace(/[^0-9,]/g, '').split(',').filter(s2 => s2 !== '').map(Number)
+    if (bgNums.length < 3) continue
+    const [rr, gg, bb] = [bgNums[0], bgNums[1], bgNums[2]]
+    if (bb > 140 && bb > rr + 40 && bb > gg + 30) {
+      const area = r.width * r.height
+      if (area > blueArea) { blue = e; blueArea = area }
+    }
+  }
+  if (blue) return click(blue)
   const ptr = Array.from(document.querySelectorAll('*'))
     .filter(e => e.offsetParent && getComputedStyle(e).cursor === 'pointer' && e.textContent && e.textContent.trim().length <= 6)
     .slice(0, 10).map(e => ({ t: (e.textContent || '').trim(), tag: e.tagName, cls: String(e.className).slice(0, 40) }))
@@ -558,9 +716,12 @@ const CLICK_DATE_CELL = (ymd: string, anchorYmd?: string): string => {
     const ariaHit = dayLeaves.find(e =>
       ((e.getAttribute('aria-label') || '') + (e.getAttribute('title') || '')).includes('${ymd}'))
     if (ariaHit) return clickEl(ariaHit)
-    // 捷径:候选日号中父级非 disabled 的恰一个 → 直接点(过去月禁用时天然消歧)
+    // 捷径:目标月可视(面板 body 含 YYYY年M月)且候选日号中父级非 disabled 的恰一个 → 直接点
+    // (2026-10-15 教训:目标月不在可视双月时,enabled-unique 会选中相邻月的同号日)
+    const ymVisible = Array.from(document.querySelectorAll('.month'))
+      .some(e => ((e.textContent || '').trim() === '${Number(ymd.slice(5, 7))}月') || ((e.textContent || '').trim().includes('${ymCn}')))
     const enabled = dayLeaves.filter(e => !/disabled/.test(String(e.parentElement && e.parentElement.className)))
-    if (enabled.length === 1) return clickEl(enabled[0])
+    if (ymVisible && enabled.length === 1) return clickEl(enabled[0])
     // 几何月消歧(live 校准 2026-10-14 往返回程:双月面板两个同日号都可点,月标题元素
     // 不可寻):日号格按 x 聚簇=月列,以「今天」锚定第 0 列=当前月,目标月偏移选列。
     const rect = (e) => e.getBoundingClientRect()
@@ -587,6 +748,18 @@ const CLICK_DATE_CELL = (ymd: string, anchorYmd?: string): string => {
     }
     return false })()`
 }
+
+/** 日历翻月(live 实测 2026-10-15:面板头 iconf-right=下月,iconf-left.disa=上月禁用) */
+const CLICK_NEXT_MONTH = `(() => {
+  const next = Array.from(document.querySelectorAll('[class*=in-date-picker][class*=iconf-right],[class*=in-date-picker][class*=next-ico]'))
+    .filter(e => e.offsetParent && !/disa/.test(String(e.className)))[0]
+  if (!next) return false
+  ;(next.parentElement || next).click()
+  return true })()`
+/** 目标月是否可视(live 实测:面板月标题=SPAN.month,形如「10月」无年份) */
+const YM_VISIBLE = (ymd: string): string => `Array.from(document.querySelectorAll('.month'))
+  .some(e => ((e.textContent || '').trim() === '${Number(ymd.slice(5, 7))}月')
+    || ((e.textContent || '').trim().includes('${ymd.slice(0, 4)}年${Number(ymd.slice(5, 7))}月')))`
 
 async function createPlaywrightDriver(): Promise<GuiDriver> {
   const { chromium } = await import('playwright-core')
@@ -620,9 +793,11 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
       if (isCalendarHint) {
         capture.calendar = { url, body }
       } else if (body.includes('flightItineraryList')) {
-        // 同 URL 会先发配置预检回包(needUserLogin 探测,无行程数据)——只收真结果
         capture.itinerary = { url, body }
         itinerarySeen = true
+      } else if (body.includes('needUserLogin')) {
+        // 配置预检回包(needUserLogin 探测)——作为登录态配对触发信号捕获
+        capture.loginProbe = { url, body }
       }
       // 行程一到位即早结算(最富数据);否则等日历或超时
       if (itinerarySeen && apiWaiter) {
@@ -638,8 +813,8 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
       const sleep = (ms: number): Promise<void> => page.waitForTimeout(ms)
       const visibleInput = (i: number) => page.locator('input:visible').nth(i)
       let lastDepYmd = ''
-      const cityValues = async (): Promise<{ from: string; to: string }> =>
-        JSON.parse(String(await page.evaluate<string>(CITY_FIELD_VALUES).catch(() => '{"from":"","to":""}'))) as { from: string; to: string }
+      const cityValues = async (seg = 1): Promise<{ from: string; to: string }> =>
+        JSON.parse(String(await page.evaluate<string>(CITY_FIELD_VALUES_FN(seg)).catch(() => '{"from":"","to":""}'))) as { from: string; to: string }
       return {
         async goto(url) {
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40_000 })
@@ -649,7 +824,7 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           await sleep(2500) // hydrate 后的二次稳定
         },
         async clickTripTab(trip) {
-          const label = trip === 'roundtrip' ? '往返' : '单程'
+          const label = trip === 'roundtrip' ? '往返' : trip === 'multi' ? '多程' : '单程'
           try {
             await page.getByText(label, { exact: true }).first().click({ timeout: 4000 })
           } catch {
@@ -668,20 +843,46 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           }
           await sleep(800)
         },
-        async typeCity(which, text) {
-          // 标签即时定位(「出发地」/「目的地」在向上第 4~5 层祖先;就绪闸后 DOM 已稳定)
-          const idx = await page.evaluate<number>(CITY_INPUT_IDX(which))
+        async typeCity(which, text, seg = 1) {
+          // 多程行惰性物化(live 实测 2026-10-15):第 N 行城市框在前行填完后才出现——
+          // 先等就绪,超时点该行「出发地」标签触发物化再等,仍无则 fail-closed。
+          if (seg > 1) {
+            const ready = await page.waitForFunction(SEG_READY(seg), { timeout: 6000 }).then(() => true).catch(() => false)
+            if (!ready) {
+              await page.evaluate<void>(CLICK_SEG_LABEL('出发地', seg)).catch(() => {})
+              await page.waitForTimeout(1200)
+              const ready2 = await page.waitForFunction(SEG_READY(seg), { timeout: 4000 }).then(() => true).catch(() => false)
+              if (!ready2) throw new Error(`第${seg}段城市框未物化(点「出发地」标签后仍未出现)——表单改版?`)
+            }
+          }
+          // 标签即时定位(「出发地」/「目的地」;多程=标签第 N 次出现;就绪闸后 DOM 已稳定)
+          let idx = await page.evaluate<number>(seg > 1 ? CITY_INPUT_IDX_N(which, seg) : CITY_INPUT_IDX(which))
+          // 「到达」框可能仍惰性:点该行「目的地」标签触发物化后重定位(严格同行,绝不覆写前行)
+          if (idx < 0 && seg > 1 && which === 'to') {
+            await page.evaluate<void>(CLICK_SEG_LABEL('目的地', seg)).catch(() => {})
+            await page.waitForTimeout(1200)
+            idx = await page.evaluate<number>(CITY_INPUT_IDX_N(which, seg))
+          }
           if (idx < 0) {
             await page.screenshot({ path: `/tmp/gotry-gui-typecity-${which}-${Date.now()}.png` }).catch(() => {})
+            const rows = String(await page.evaluate<string>(`(() => JSON.stringify({
+              inputs: Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent).map(e => {
+                const r = e.getBoundingClientRect()
+                return { ph: (e.placeholder || '').slice(0, 10), y: Math.round(r.top), v: (e.value || '').slice(0, 16) }
+              }).slice(0, 12),
+              labels: Array.from(document.querySelectorAll('*'))
+                .filter(e => e.offsetParent && e.children.length === 0 && /^(出发地|目的地)$/.test((e.textContent || '').trim()))
+                .map(e => { const r = e.getBoundingClientRect(); return { t: (e.textContent || '').trim(), y: Math.round(r.top) } })
+            }))()`).catch(() => '?'))
             const href = String(await page.evaluate<string>('location.href').catch(() => '?'))
-            throw new Error(`${which === 'from' ? '出发' : '到达'}城市输入框未定位到(标签未命中;href=${href})——表单改版或页面未就绪?`)
+            throw new Error(`${which === 'from' ? '出发' : '到达'}城市输入框未定位到(seg=${seg};href=${href});行结构:${rows.slice(0, 700)}`)
           }
           const input = visibleInput(idx)
           await input.click({ timeout: 5000 })
           await input.fill('', { timeout: 3000 }).catch(() => {})
           await input.pressSequentially(text, { delay: 160 })
         },
-        async pickSuggest(which, text) {
+        async pickSuggest(which, text, seg = 1) {
           // 站点补全默认高亮首项:ArrowDown+Enter 显式选中(live 校准:裸 Enter 可能
           // 未命中面板,失焦后字段回弹默认值);选中后验证归一化 (XXX),不成立重试一次。
           const pick = async (): Promise<boolean> => {
@@ -690,15 +891,16 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
             await sleep(150)
             await page.keyboard.press('Enter')
             await sleep(700)
-            const values = await cityValues()
+            const values = await cityValues(seg)
             const v = which === 'from' ? values.from : values.to
             return v.includes(text) && /\([A-Z]{3}\)/.test(v)
           }
           if (await pick()) return
           if (await pick()) return
+          if (seg > 1) await sleep(1500) // 行内后续框的物化窗口(live 实测)
           await page.screenshot({ path: `/tmp/gotry-gui-pick-${which}-${Date.now()}.png` }).catch(() => {})
           const href = String(await page.evaluate<string>('location.href').catch(() => '?'))
-          const values = await cityValues()
+          const values = await cityValues(seg)
           const ctxDump = String(await page.evaluate<string>(
             `(() => JSON.stringify(Array.from(document.querySelectorAll('input'))
               .filter(e => e.offsetParent && /城市|机场/.test(e.placeholder || '') && !/旅游|搜索/.test(e.placeholder || ''))
@@ -708,9 +910,9 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           ).catch(() => '?'))
           throw new Error(`城市补全未选中:${which} 框实际「${(which === 'from' ? values.from : values.to).slice(0, 30)}」(期望含 ${text} 且归一化为 (三字码);href=${href});城市框实证:${ctxDump.slice(0, 900)}`)
         },
-        async setDate(which, ymd) {
-          if (which === 'dep') lastDepYmd = ymd
-          const idx = await page.evaluate<number>(DATE_INPUT_IDX(which))
+        async setDate(which, ymd, seg = 1) {
+          if (which === 'dep' && seg === 1) lastDepYmd = ymd
+          const idx = await page.evaluate<number>(seg > 1 ? DATE_INPUT_IDX_SEG(seg) : DATE_INPUT_IDX(which))
           const input = visibleInput(idx)
           await input.click({ timeout: 5000 })
           await sleep(600)
@@ -725,7 +927,19 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           }, ymd).catch(() => false)
           if (typed) { await sleep(400); return }
           // 策略②:日历单元格(aria/title 含完整日期优先;否则面板可见目标月时按日号)
-          const clicked = await page.evaluate<boolean>(CLICK_DATE_CELL(ymd, which === 'back' ? lastDepYmd : undefined)).catch(() => false)
+          let clicked = await page.evaluate<boolean>(CLICK_DATE_CELL(ymd, which === 'back' ? lastDepYmd : undefined)).catch(() => false)
+          if (!clicked) {
+            // 目标月不在可视双月(多程跨月,live 实测):点 iconf-right 翻月至可见再消歧
+            for (let k = 0; k < 12 && !clicked; k += 1) {
+              // 真实鼠标事件点击面板翻月箭头(evaluate 的 .click() 实测被 React 层吞)
+              const next = page.locator('[class*=in-date-picker][class*=iconf-right]').first()
+              const advanced = await next.click({ timeout: 2000 }).then(() => true).catch(() => false)
+              if (!advanced) break
+              await sleep(600)
+              if (!(await page.evaluate<boolean>(YM_VISIBLE(ymd)).catch(() => false))) continue
+              clicked = await page.evaluate<boolean>(CLICK_DATE_CELL(ymd, which === 'back' ? lastDepYmd : undefined)).catch(() => false)
+            }
+          }
           if (!clicked) {
             await page.screenshot({ path: `/tmp/gotry-gui-date-${which}-${Date.now()}.png` }).catch(() => {})
             // 实证诊断:日号叶子(任意可见性)+ 月标题叶子的真实形状,供下一轮校准
@@ -750,6 +964,11 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
         async clickSearch() {
           await page.keyboard.press('Escape').catch(() => {})
           await sleep(500)
+          // 语义优先(live 实测 2026-10-15 多程:几何/叶子/色块三策在该构建全部 miss,
+          // role=button name=搜索 命中蓝色大按钮):短超时,失败回落 evaluate 几何族。
+          const byRole = page.getByRole('button', { name: '搜索' }).first()
+          const roleOk = await byRole.click({ timeout: 5000 }).then(() => true).catch(() => false)
+          if (roleOk) { await sleep(600); return }
           const dumpDir = process.env.GOTRY_GUI_DUMP
           if (dumpDir) {
             const cands = String(await page.evaluate<string>(CLICK_FORM_SEARCH_CANDIDATES).catch(() => '{"err":"eval-fail"}'))
@@ -761,8 +980,19 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
         async visibleFormText() {
           return String(await page.evaluate<string>(VIS_FORM_TEXT).catch(() => ''))
         },
-        async cityFieldValues() {
-          return JSON.parse(String(await page.evaluate<string>(CITY_FIELD_VALUES).catch(() => '{"from":"","to":""}'))) as { from: string; to: string }
+        async cityFieldValues(seg = 1) {
+          return cityValues(seg)
+        },
+        async waitForHumanLogin(timeoutMs: number) {
+          // 红线:窗口导航到携程官方登录页,人自己完成登录;只轮询票据 cookie 的名字(值即弃)。
+          await page.goto('https://passport.ctrip.com/user/login?backurl=' + encodeURIComponent('https://flights.ctrip.com/online/channel/domestic'), { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {})
+          const deadline = Date.now() + timeoutMs
+          while (Date.now() < deadline) {
+            const names = await ctx.cookies().then(cs => cs.map(c => c.name)).catch(() => [] as string[])
+            if (names.some(n => LOGIN_COOKIE_NAMES.includes(n))) return true
+            await page.waitForTimeout(5_000)
+          }
+          return false
         },
         async pageText() {
           const title = await page.title().catch(() => '')

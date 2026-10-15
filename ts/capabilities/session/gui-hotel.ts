@@ -6,7 +6,7 @@
  * 与机票 GUI 车道(gui-flight.ts)同构:动作闭集 + 提交件黑名单 + readback 硬闸 +
  * 可注入 driver;复用 ctrip-hotel 适配器的三态分类器(classifyCtripHotelList:
  * parsed/recognized-empty/unrecognized——只有显式空列表才算 miss,绝不猜)。
- * 证据链 [会话:ctrip-hotel-gui@ts],恒标 anonymous。
+ * 证据链 [会话:ctrip-hotel-gui@ts];anonymous 标注(登录态配对后为 false)。
  */
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -19,6 +19,8 @@ import { HOTEL_NETWORK_HINTS, looksLikeHotelListBody, classifyCtripHotelList, ty
 export const HOTEL_GUI_HOME = 'https://hotels.ctrip.com/'
 const YMD = /^\d{4}-\d{2}-\d{2}$/
 const GUI_CHALLENGE_RE = /验证|校验|拖动滑块|请输入验证码/
+/** 登录票据 cookie 名单(与 bridge 车道 LOGIN_COOKIE_NAMES 同源;只读名字) */
+const TICKET_COOKIE_NAMES = ['cticket', 'uid', 'uname', 'passport']
 
 export interface GuiHotelQuery {
   /** 目的地中文(站点自动补全解析,码表不在主链路) */
@@ -27,6 +29,9 @@ export interface GuiHotelQuery {
   checkIn: string
   /** 退房 YYYY-MM-DD(须晚于入住) */
   checkOut: string
+  /** 登录态配对(2026-10-15,#664 余尾):匿名列表强制跳 passport 时,窗口停在官方登录页
+   * 等用户本人完成登录(cookie 只读名字),随后原窗重驾拿登录态真实价。 */
+  interactiveLoginMs?: number
   timeoutMs?: number
 }
 
@@ -102,6 +107,8 @@ export interface GuiHotelPage {
   pageText(): Promise<string>
   /** 当前页 URL(list 页真实形状回传) */
   currentUrl(): Promise<string>
+  /** 登录态配对:窗口停在 passport 登录页等人完成登录(cookie 只读名字);超时 false */
+  waitForHumanLogin(timeoutMs: number): Promise<boolean>
   waitForApiBody(timeoutMs: number): Promise<{ url: string; body: string } | null>
   recentApiUrls?(): Promise<string[]>
 }
@@ -121,7 +128,7 @@ export interface GuiHotelResult {
   verdict: GuiHotelVerdict
   hotels?: SessionHotelOption[]
   error?: string
-  anonymous: true
+  anonymous: boolean
   /** 检索后站点落到的 list 页 URL(真实形状回传) */
   listUrl?: string
 }
@@ -134,10 +141,13 @@ export function __setHotelDriverForTest(factory: (() => GuiHotelDriver) | null):
 export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
+  let humanLoggedIn = false
   const fail = (error: string, verdict: GuiHotelVerdict = 'error'): GuiHotelResult => ({
     ok: false, via: 'session-ctrip-hotel-gui-error', latencyMs: Date.now() - started, verdict, error,
-    evidence: `[会话:ctrip-hotel-gui@error@${ts}] ${error.slice(0, 120)}`, anonymous: true,
+    evidence: `[会话:ctrip-hotel-gui@error@${ts}] ${error.slice(0, 120)}`, anonymous: !humanLoggedIn,
   })
+  const needsLoginMessage = (): string =>
+    '酒店列表需登录态:匿名窗口被重定向到携程登录页(红线:不自动登录)——interactiveLogin=true 可在窗口内本人登录后自动重查,或 gotry_session_login 后走 bridge 车道' 
 
   if (!(q.checkIn < q.checkOut)) return fail(`退房日期(${q.checkOut})须晚于入住(${q.checkIn})`)
 
@@ -157,10 +167,11 @@ export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResul
 
   let api: { url: string; body: string } | null = null
   let listUrl = ''
-  try {
+  class HotelFlowAbort { constructor(public result: GuiHotelResult) {} }
+  const driveOnce = async (): Promise<void> => {
     for (const a of plan) {
       const remain = budget - (Date.now() - started)
-      if (remain <= 0) return fail(`GUI 预算耗尽(${budget}ms)`)
+      if (remain <= 0) throw new HotelFlowAbort(fail(`GUI 预算耗尽(${budget}ms)`))
       const step = <T,>(p: Promise<T>, what: string): Promise<T> =>
         withDeadline(p, Math.min(remain, 20_000), `GUI 步骤失败(${what})`)
       switch (a.t) {
@@ -176,7 +187,7 @@ export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResul
           {
             const after = await page.currentUrl().catch(() => '')
             if (/passport\.ctrip\.com\/.*login/i.test(after)) {
-              return fail('酒店列表需登录态:匿名窗口被重定向到携程登录页(红线:不自动登录)——gotry_session_login 为用户打开官方登录入口后走 bridge 车道(ui 默认),或登录后重试', 'needs-login')
+              throw new HotelFlowAbort(fail('__NEEDS_LOGIN__', 'needs-login'))
             }
           }
           break
@@ -184,7 +195,7 @@ export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResul
           const dest = await step(page.destFieldValue(), '读回目的地框')
           const form = await step(page.visibleFormText(), '读回表单')
           if (!dest.includes(a.expect.to)) {
-            return fail(`readback 硬闸:目的地框未确认「${a.expect.to}」(实际「${dest.slice(0, 30)}」)——已终止,未发起搜索`)
+            throw new HotelFlowAbort(fail(`readback 硬闸:目的地框未确认「${a.expect.to}」(实际「${dest.slice(0, 30)}」)——已终止,未发起搜索`))
           }
           // live 校准:酒店表单日期显示为本地化格式(如 11月13日(周五))而非 YMD——双格式核对
           const dateShown = (ymd: string): boolean => {
@@ -193,7 +204,7 @@ export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResul
           }
           for (const [label, value] of [['入住日期', a.expect.checkIn], ['退房日期', a.expect.checkOut]] as const) {
             if (!dateShown(value)) {
-              return fail(`readback 硬闸:${label}「${value}」未在表单确认(表单摘要:${form.slice(0, 200)})——已终止,未发起搜索`)
+              throw new HotelFlowAbort(fail(`readback 硬闸:${label}「${value}」未在表单确认(表单摘要:${form.slice(0, 200)})——已终止,未发起搜索`))
             }
           }
           break
@@ -201,32 +212,65 @@ export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResul
         case 'awaitApi': {
           const text = await step(page.pageText(), '检查页面')
           if (GUI_CHALLENGE_RE.test(text)) {
-            return fail('风控/验证码命中;按红线不重试不绕过,交还用户', 'challenged')
+            throw new HotelFlowAbort(fail('风控/验证码命中;按红线不重试不绕过,交还用户', 'challenged'))
           }
           api = await step(page.waitForApiBody(Math.min(remain - 500, 18_000)), '等待酒店列表回包')
           if (!api) {
             const recent = page.recentApiUrls ? (await page.recentApiUrls().catch(() => [])) : []
             const nowUrl = await page.currentUrl().catch(() => '?')
             if (/passport\.ctrip\.com\/.*login/i.test(nowUrl)) {
-              return fail('酒店列表需登录态:匿名窗口被重定向到携程登录页(红线:不自动登录)——gotry_session_login 为用户打开官方登录入口后走 bridge 车道,或登录后重试', 'needs-login')
+              throw new HotelFlowAbort(fail('__NEEDS_LOGIN__', 'needs-login'))
             }
-            return fail(`酒店列表回包嗅探超时(href=${nowUrl.slice(0, 120)})${recent.length ? ` ‖recent-apis: ${recent.slice(-8).join(' ; ').slice(0, 500)}` : ''}`)
+            throw new HotelFlowAbort(fail(`酒店列表回包嗅探超时(href=${nowUrl.slice(0, 120)})${recent.length ? ` ‖recent-apis: ${recent.slice(-8).join(' ; ').slice(0, 500)}` : ''}`))
           }
           break
         }
       }
     }
-    listUrl = await page.currentUrl().catch(() => '')
+    return
+  }
+
+  try {
+    await driveOnce()
   } catch (e) {
-    return fail((e as Error).message.slice(0, 400))
+    // 登录态配对(#664 余尾,2026-10-15):needs-login 且调用方授权等待时,窗口停在官方
+    // 登录页等用户本人完成登录(cookie 只读名字),随后原窗重驾一次拿登录态真实价。
+    if (e instanceof HotelFlowAbort && e.result.verdict === 'needs-login' && q.interactiveLoginMs && q.interactiveLoginMs > 0) {
+      const loggedIn = await withDeadline(page.waitForHumanLogin(q.interactiveLoginMs), q.interactiveLoginMs + 5_000, '等待人工登录').catch(() => false)
+      if (!loggedIn) {
+        return fail(`登录等待超时(${q.interactiveLoginMs}ms):用户未在 GUI 窗口完成登录——可稍后带 interactiveLogin 重试,或登录后走 bridge 车道`, 'needs-login')
+      }
+      humanLoggedIn = true
+      api = null
+      try {
+        await driveOnce()
+      } catch (e2) {
+        if (e2 instanceof HotelFlowAbort) {
+          return e2.result.error === '__NEEDS_LOGIN__'
+            ? fail(needsLoginMessage(), 'needs-login')
+            : e2.result
+        }
+        return fail((e2 as Error).message.slice(0, 400))
+      }
+    } else if (e instanceof HotelFlowAbort) {
+      return e.result.error === '__NEEDS_LOGIN__'
+        ? fail(needsLoginMessage(), 'needs-login')
+        : e.result
+    } else {
+      return fail((e as Error).message.slice(0, 400))
+    }
   } finally {
     await driver.close().catch(() => {})
   }
+  try {
+    listUrl = await page.currentUrl().catch(() => '')
+  } catch { /* 已关窗口 */ }
 
-  if (!api) return fail('内部不变量失败:api 未结算(awaitApi 已过)')
-  const classified = classifyCtripHotelList(api.body)
+  const captured = api as { url: string; body: string } | null
+  if (captured === null) return fail('内部不变量失败:api 未结算(awaitApi 已过)')
+  const classified = classifyCtripHotelList(captured.body)
   if (classified.shape === 'unrecognized') {
-    return fail(`酒店列表回包形状未识别(body头:${api.body.replace(/\s+/g, ' ').slice(0, 240)})`)
+    return fail(`酒店列表回包形状未识别(body头:${captured.body.replace(/\s+/g, ' ').slice(0, 240)})`)
   }
   if (classified.shape === 'malformed') {
     return fail('酒店列表回包非 JSON(接口改版?)')
@@ -237,8 +281,8 @@ export async function runHotelGuiSearch(q: GuiHotelQuery): Promise<GuiHotelResul
     ok: verdict === 'hit', via: 'session-ctrip-hotel-gui', latencyMs: Date.now() - started, verdict,
     ...(hotels.length > 0 ? { hotels: hotels.slice(0, 20) } : {}),
     ...(listUrl ? { listUrl } : {}),
-    evidence: `[会话:ctrip-hotel-gui@${ts}] 匿名 GUI 面检索:${hotels.length} 家(shape=${classified.shape};匿名公开价,非登录态价)`,
-    anonymous: true,
+    evidence: `[会话:ctrip-hotel-gui@${ts}] GUI 面检索:${hotels.length} 家(shape=${classified.shape};${humanLoggedIn ? '用户本人已在本窗口官方页登录,登录态真实价' : '匿名公开价,非登录态价'})`,
+    anonymous: !humanLoggedIn,
   }
 }
 
@@ -431,6 +475,16 @@ async function createHotelPlaywrightDriver(): Promise<GuiHotelDriver> {
           return title + text
         },
         async currentUrl() { return page.url() },
+        async waitForHumanLogin(timeoutMs: number) {
+          // 红线:人自己完成登录;只轮询票据 cookie 名字(值即弃)。窗口此刻通常已在 passport 页。
+          const deadline = Date.now() + timeoutMs
+          while (Date.now() < deadline) {
+            const names = await ctx.cookies().then(cs => cs.map(c => c.name)).catch(() => [] as string[])
+            if (names.some(n => TICKET_COOKIE_NAMES.includes(n))) return true
+            await page.waitForTimeout(5_000)
+          }
+          return false
+        },
         async recentApiUrls() { return [...recentUrls] },
         async waitForApiBody(timeoutMs) {
           return new Promise(resolve => {

@@ -66,6 +66,10 @@ export interface SessionFlightQuery {
   date: string
   /** 回程日期:存在即往返检索——bridge 车道不知往返 URL 形状(诚实边界,报错指路 GUI);GUI 车道原生支持 */
   backDate?: string
+  /** 多程段(2–3 段;仅 ui=gui;存在时忽略顶层 from/to/date/backDate) */
+  legs?: Array<{ from: string; to: string; date: string }>
+  /** 登录态配对等待上限 ms(仅 ui=gui;needUserLogin/passport 命中时窗口停官方登录页等人) */
+  interactiveLoginMs?: number
   /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
   profileDir?: string
   headless?: boolean
@@ -149,6 +153,8 @@ export function appendExtensionAudit(auditPath: string | undefined, entry: { kin
 // ---------------------------------------------------------------------------
 
 export interface SessionHotelQuery {
+  /** 登录态配对等待上限 ms(仅 ui=gui;passport 命中时窗口停官方登录页等人) */
+  interactiveLoginMs?: number
   /** 目的地(中文);城市码表未收录时须带 cityId */
   to: string
   /** 显式城市 id(携程/trip.com 酒店 list 页 URL 的 city= 数字;覆盖码表) */
@@ -216,7 +222,7 @@ export async function sessionHotelGuiSearch(q: SessionHotelQuery): Promise<Sessi
   if (!q.checkIn || !q.checkOut) {
     return err('error', 'GUI 车道需要 checkIn/checkOut(YYYY-MM-DD,成对)')
   }
-  const r = await runHotelGuiSearch({ to: q.to, checkIn: q.checkIn, checkOut: q.checkOut, ...(q.timeoutMs ? { timeoutMs: q.timeoutMs } : {}) })
+  const r = await runHotelGuiSearch({ to: q.to, checkIn: q.checkIn, checkOut: q.checkOut, ...(q.interactiveLoginMs ? { interactiveLoginMs: q.interactiveLoginMs } : {}), ...(q.timeoutMs ? { timeoutMs: Math.max(q.timeoutMs, q.interactiveLoginMs ? q.interactiveLoginMs + 120_000 : 0) } : {}) })
   return {
     ok: r.ok, via: r.via, evidence: r.evidence, latencyMs: r.latencyMs, verdict: r.verdict,
     ...(r.hotels ? { hotels: r.hotels } : {}),
@@ -981,7 +987,7 @@ export async function sessionFlightGuiSearch(q: SessionFlightQuery): Promise<Ses
     return err('error', `回程日期(${q.backDate})须晚于去程(${q.date})`)
   }
 
-  const r = await runFlightGuiSearch({ from: q.from, to: q.to, date: q.date, ...(q.backDate ? { backDate: q.backDate } : {}), ...(q.timeoutMs ? { timeoutMs: q.timeoutMs } : {}) })
+  const r = await runFlightGuiSearch({ from: q.from, to: q.to, date: q.date, ...(q.backDate ? { backDate: q.backDate } : {}), ...(q.legs ? { legs: q.legs } : {}), ...(q.interactiveLoginMs ? { interactiveLoginMs: q.interactiveLoginMs } : {}), ...(q.timeoutMs ? { timeoutMs: Math.max(q.timeoutMs, q.interactiveLoginMs ? q.interactiveLoginMs + 120_000 : 0) } : {}) })
   return {
     ok: r.ok, via: r.via, evidence: r.evidence, latencyMs: r.latencyMs,
     verdict: r.verdict,

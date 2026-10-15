@@ -1894,13 +1894,15 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       fromStationTelecode: { type: 'string', description: '出发站三位电报码,仅 kind=train;城市码表外时填(kyfw 查询页 URL 里)' },
       toStationTelecode: { type: 'string', description: '到达站三位电报码,仅 kind=train,同上' },
       backDate: { type: 'string', description: '回程日期 YYYY-MM-DD,仅 kind=flight;存在即往返检索——须 ui=gui(GUI 车道站点表单原生往返;bridge 车道不知往返 URL 形状,不猜)' },
-      ui: { type: 'string', enum: ['bridge', 'gui'], description: 'kind=flight|hotel:bridge(默认,用户登录态被动嗅探)|gui(gotry 隔离匿名窗口驱动 PC 表单——flight 往返/任意城市原生+低价日历;hotel 任意目的地原生(cityId 码表不在主链路);匿名公开价)' },
+      ui: { type: 'string', enum: ['bridge', 'gui'], description: 'kind=flight|hotel:bridge(默认,用户登录态被动嗅探)|gui(gotry 隔离匿名窗口驱动 PC 表单——flight 往返/多程/任意城市原生+低价日历;hotel 任意目的地原生;匿名公开价)' },
+      legs: { type: 'string', description: '多程段 JSON 数组,仅 kind=flight+ui=gui:[{"from":"香港","to":"迪拜","date":"2026-12-06"},{"from":"迪拜","to":"上海","date":"2026-12-10"}](2–3 段)' },
+      interactiveLogin: { type: 'boolean', description: '仅 ui=gui:登录墙命中时窗口停在携程官方登录页,等用户本人在窗口内完成登录(最多 6 分钟)后自动重查,拿登录态真实数据(行程明细/酒店真实价)。gotry 永不经手密码/验证码/cookie 值' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec) {
       const selectedKind = resolveSessionSearchKind(args)
       if (!selectedKind.ok) return { ok: false, summary: selectedKind.reason } as const
-      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; fromCityCode?: string; toCityCode?: string; cityId?: number | string; country?: string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string; backDate?: string; ui?: string }>(args), kind: selectedKind.kind }
+      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; fromCityCode?: string; toCityCode?: string; cityId?: number | string; country?: string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string; backDate?: string; ui?: string; legs?: string; interactiveLogin?: boolean }>(args), kind: selectedKind.kind }
       const runSessionEffect = seams.effect ?? interpretEffect
       // ---- Dida 供应商门户(2026-09-09 实装;hotel-be portal integration 迁移线)----
       if (q.kind === 'dida') {
@@ -1974,6 +1976,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           effect: q.ui === 'gui' ? 'SESSION_HOTEL_GUI_SEARCH' : 'SESSION_HOTEL_SEARCH',
           params: {
             to: q.to, country: q.country, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults,
+            ...(q.ui === 'gui' && q.interactiveLogin ? { interactiveLoginMs: 360_000 } : {}),
             auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
           },
         })
@@ -2007,11 +2010,34 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       if (q.ui !== undefined && q.ui !== 'bridge' && q.ui !== 'gui') {
         return { ok: false, summary: 'kind=flight 的 ui 只接受 bridge(默认,登录态被动嗅探)|gui(隔离匿名窗口驱动表单)' } as const
       }
+      // 多程段(仅 gui;严格形状闸——2–3 段、城市非空、日期 YMD、段内日期递增)
+      let legs: Array<{ from: string; to: string; date: string }> | undefined
+      if (q.legs !== undefined) {
+        if (q.ui !== 'gui') return { ok: false, summary: 'legs(多程)仅支持 ui=gui(GUI 车道驱动多程表单)' } as const
+        try {
+          const parsed = JSON.parse(q.legs) as unknown
+          if (!Array.isArray(parsed) || parsed.length < 2 || parsed.length > 3) throw new Error('段数须 2–3')
+          legs = parsed.map((raw: unknown) => {
+            const leg = raw as { from?: unknown; to?: unknown; date?: unknown }
+            if (typeof leg.from !== 'string' || !leg.from.trim() || typeof leg.to !== 'string' || !leg.to.trim() || typeof leg.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(leg.date)) {
+              throw new Error('每段须 {from,to,date(YYYY-MM-DD)}')
+            }
+            return { from: leg.from.trim(), to: leg.to.trim(), date: leg.date }
+          })
+          for (let i = 1; i < legs.length; i += 1) {
+            if (legs[i]!.date <= legs[i - 1]!.date) throw new Error('段日期须递增')
+          }
+        } catch (e) {
+          return { ok: false, summary: `legs 形状非法:${(e as Error).message}` } as const
+        }
+      }
       const itp = await runSessionEffect({
         effect: q.ui === 'gui' ? 'SESSION_FLIGHT_GUI_SEARCH' : 'SESSION_FLIGHT_SEARCH',
         params: {
           from: q.from, to: q.to, date: q.date, fromCityCode: q.fromCityCode, toCityCode: q.toCityCode,
           ...(q.backDate ? { backDate: q.backDate } : {}),
+          ...(legs ? { legs } : {}),
+          ...(q.ui === 'gui' && q.interactiveLogin ? { interactiveLoginMs: 360_000 } : {}),
           // ADR-15 收尾:ReadGuard 审计在生产工具路径同样落盘(此前仅测试传隔离 stateRoot 才有 JSONL)
           auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
         },
