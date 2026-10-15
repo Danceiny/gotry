@@ -2608,6 +2608,48 @@ assert.equal((bootRejectResult as any)[0]?.error?.code, 'PLANNER_BOOT_TIMEOUT', 
 assert.equal(bootRejectPortClosed, 1, 'an expired handshake closes its owned run port')
 await bootRejectPlanner.close()
 
+// A cold first boot that exceeds the local handshake budget must not fail the
+// turn while deadline headroom remains: the failed boot warmed the OS page
+// cache, so one fresh-port retry converges (Danceiny/gotry#660). The retry
+// must not consume a provider attempt, and the failed port must be closed.
+let bootRetryFirstClosed = 0
+let bootRetrySecondRuns = 0
+let bootRetrySecondClosed = 0
+let bootRetryPortIndex = 0
+const bootRetryPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => {
+    bootRetryPortIndex += 1
+    if (bootRetryPortIndex === 1) {
+      return {
+        run: () => Promise.reject(new Error('HARNESS_BOOT_TIMEOUT')),
+        async close() { bootRetryFirstClosed += 1 },
+        bootObservation: () => undefined,
+      }
+    }
+    return {
+      async run() {
+        bootRetrySecondRuns += 1
+        return {
+          finalResponse: '',
+          events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }), 'call-boot-retry'),
+        }
+      },
+      async close() { bootRetrySecondClosed += 1 },
+    }
+  },
+  turnTimeoutMs: 30_000,
+} as DshEmbeddedBookingPlannerOptions & { runPortFactory: unknown; turnTimeoutMs: number })
+const bootRetryResult = await resolveWithin(
+  bootRetryPlanner.plannerFactory(bootTimeoutTask).next({ task: bootTimeoutTask, turn: bootTimeoutTurn }),
+  250,
+)
+assert.notDeepEqual(bootRetryResult, { testDeadline: true }, 'a retried boot stays inside the turn deadline')
+assert.equal((bootRetryResult as any)[0]?.kind, 'operation', 'a fresh-port retry after a cold boot timeout produces the operation decision')
+assert.equal((bootRetryResult as any)[0]?.action?.kind, 'search.run', 'the retried decision carries the capability action')
+assert.equal(bootRetryFirstClosed, 1, 'the failed boot port is closed by the retry')
+assert.ok(bootRetrySecondRuns >= 1, 'the fresh port actually ran the provider request')
+await bootRetryPlanner.close()
+
 let taskAClosed = 0
 let taskARuns = 0
 let taskBRuns = 0

@@ -1824,7 +1824,25 @@ export async function createDshEmbeddedBookingPlanner(
               }
               // The SDK reports an expired local handshake as its own typed
               // failure; no provider request was ever made.
-              if (error instanceof Error && error.message === 'HARNESS_BOOT_TIMEOUT') throw new PlannerBootTimeoutExceeded()
+              if (error instanceof Error && error.message === 'HARNESS_BOOT_TIMEOUT') {
+                // A cold OS page cache routinely pushes the first boot past
+                // the local budget (observed 6.5–8s after idle on UAT,
+                // Danceiny/gotry#660): the failed boot warms the very pages
+                // the next port reads, so one fresh-port retry converges and
+                // only a genuinely stuck runtime burns both. Same shape as
+                // the soft-stall retry above; a boot that never reached a
+                // provider request must not consume an attempt.
+                const bootRemainingMs = deadlineAt - Date.now()
+                if (bootRemainingMs < PLANNER_MIN_VIABLE_RUN_MS) throw new PlannerBootTimeoutExceeded()
+                console.error('[booking-copilot] planner boot exceeded the local budget; retrying on a fresh run port:', JSON.stringify({
+                  attempt, bootRemainingMs,
+                }))
+                retire(runPort)
+                runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
+                if (closed || sessionClosePromise) throw new Error(closed ? 'planner_closed' : 'planner_session_closed')
+                attempt -= 1
+                continue
+              }
               if (error instanceof PlannerTurnDeadlineExceeded) {
                 // The turn deadline can expire while our own runtime is still
                 // starting; that phase is ours, not the provider's.
@@ -1864,6 +1882,14 @@ export async function createDshEmbeddedBookingPlanner(
           retire(runPort)
           return [{ kind: 'error', error: { code: 'PLANNER_ATTEMPT_BUDGET_EXHAUSTED', message: 'GoTry exhausted the planner attempt budget without a decision.', retryable: true } }]
         } catch (error) {
+          // A port that fails its own initialize (createManagedDshRunPort with
+          // initializeTimeoutMs) rejects with the SDK's raw typed message,
+          // never reaching the run loop; classify it as the boot timeout it is
+          // instead of surfacing an untyped failure.
+          if (!(error instanceof PlannerBootTimeoutExceeded)
+            && error instanceof Error && error.message === 'HARNESS_BOOT_TIMEOUT') {
+            error = new PlannerBootTimeoutExceeded()
+          }
           if (error instanceof PlannerBootTimeoutExceeded) {
             metricOutcome = 'boot_timeout'
             retire(runPort)
