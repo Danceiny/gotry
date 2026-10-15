@@ -22,6 +22,10 @@
 
 Run `npx @danceiny/gotry@0.2.0-rc.32 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
 
+### Published
+
+Published to npm on 2026-10-15 as `@danceiny/gotry@0.2.0-rc.32` with `TAG=latest ./scripts/publish-npm.sh` (tag passed explicitly, #50①), then pulled back from the registry: `npm view` shows `latest` → `0.2.0-rc.32` (shasum `c8273604af4c9e8297fd5b84e432d526e9e01111`, 573 files) — the shasum `npm pack --dry-run` predicted from the tagged tree before publishing — and the downloaded tarball hashes to it. On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) `npx @danceiny/gotry@0.2.0-rc.32` passes end to end: `doctor` prints its report, the dist entry loads the `gotry-tools` plugin, `web` boots (token URL 303 → 200, no token 401), and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: [v0.2.0-rc.32](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.32). The compatibility `rc` tag is still on `0.0.1-rc.20`.
+
 ## Unreleased
 
 ---
