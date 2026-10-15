@@ -138,6 +138,8 @@ export interface DshEmbeddedBookingPlannerOptions {
   dshBin?: string
   provider?: string
   model?: string
+  /** Explicit path for the chat-completions gateway LLM plugin; defaults to the sibling dsh-llm-gateway-chat.js. */
+  gatewayLlmPluginPath?: string
   reasoningEffort?: 'off' | 'low' | 'high' | 'max'
   maxTokens?: number
   /** Total wall-clock budget across all repair attempts for one planner turn. */
@@ -208,6 +210,10 @@ export function buildDshPlannerEnvironment(
   if (baseUrl) target.DEEPSEEK_BASE_URL = baseUrl
   if (model) target.DEEPSEEK_MODEL = model
   if (maxTokens) target.DEEPSEEK_MAX_TOKENS = maxTokens
+  // Wire-protocol selection rides the same namespace: 'gateway-chat' routes the
+  // child at the chat-completions adapter plugin (dsh-llm-gateway-chat.js)
+  // instead of the SDK's bundled Messages adapter.
+  if (source.DEEPSEEK_PROVIDER) target.DEEPSEEK_PROVIDER = source.DEEPSEEK_PROVIDER
   return target
 }
 
@@ -232,8 +238,8 @@ function quoteYaml(value: string): string {
 }
 
 /** Runtime patch over dsh's sdk-minimal profile: one typed planner tool per action kind. */
-export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
-  return `# GoTry embedded Booking Copilot: typed planning only; no browser, shell, files, Book, or persisted chat.\n\
+export function buildDshEmbeddedBookingPatch(pluginPath: string, gatewayLlmPluginPath = ''): string {
+  const patchBody = `# GoTry embedded Booking Copilot: typed planning only; no browser, shell, files, Book, or persisted chat.\n\
 - id: deepseek-llm-api-extensions\n  disabled: true\n\
 - id: session-log-deepseek\n  disabled: true\n\
 - id: plugin-package-inventory-deepseek\n  disabled: true\n\
@@ -292,10 +298,14 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
     skills:\n\
       enabled: false\n\
     toolBash: false\n\
-    toolJobs: false\n\
-- insert:\n\
-    - id: gotry-embedded-booking\n\
-      name: ${quoteYaml(pluginPath)}\n`
+    toolJobs: false\n`
+  const inserts = [
+    `- insert:\n    - id: gotry-embedded-booking\n      name: ${quoteYaml(pluginPath)}\n`,
+    ...(gatewayLlmPluginPath
+      ? [`- insert:\n    - id: llm-gateway-chat\n      name: ${quoteYaml(gatewayLlmPluginPath)}\n`]
+      : []),
+  ]
+  return patchBody + inserts.join('')
 }
 
 interface ResolvedRealRunPortConfig {
@@ -314,7 +324,7 @@ export function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptio
   const sourceEnv = options.env ?? process.env
   const childEnv = buildDshPlannerEnvironment(sourceEnv)
   if (!childEnv.DEEPSEEK_API_KEY) throw new Error('booking_planner_model_key_required')
-  const provider = options.provider?.trim() || 'deepseek-official'
+  const provider = options.provider?.trim() || childEnv.DEEPSEEK_PROVIDER || 'deepseek-official'
   const configuredModel = options.model ?? childEnv.DEEPSEEK_MODEL
   if (provider !== 'deepseek-official' && !configuredModel) {
     throw new Error('booking_planner_model_required_for_nondefault_provider')
@@ -350,8 +360,9 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
   const dshHome = join(scratch, 'home')
   mkdirSync(dshHome, { recursive: true })
   const pluginPath = options.pluginPath ?? fileURLToPath(new URL('./dsh-plugin.js', import.meta.url))
+  const gatewayLlmPluginPath = options.gatewayLlmPluginPath ?? fileURLToPath(new URL('./dsh-llm-gateway-chat.js', import.meta.url))
   const patchPath = join(scratch, 'embedded-booking.cordis.yml')
-  writeFileSync(patchPath, buildDshEmbeddedBookingPatch(pluginPath), { encoding: 'utf8', mode: 0o600 })
+  writeFileSync(patchPath, buildDshEmbeddedBookingPatch(pluginPath, gatewayLlmPluginPath), { encoding: 'utf8', mode: 0o600 })
 
   let managedPort: DshPlannerRunPort
   try {
