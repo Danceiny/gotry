@@ -956,6 +956,33 @@ const invalidThenValidDecision = await invalidThenValid.plannerFactory(task).nex
 assertRuntimeMaterializedOperation(invalidThenValidDecision, 'search.run', {}, task, 'a schema-rejected call may be superseded by the later unique typed success in the same run')
 await invalidThenValid.close()
 
+let schemaRepairRuns = 0
+const schemaRejectedThenRepaired = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      schemaRepairRuns += 1
+      if (schemaRepairRuns === 1) {
+        return {
+          finalResponse: '',
+          events: [
+            toolCall('booking_search_hotels', invalidCallArguments, 'call-schema-rejected'),
+            toolResult('call-schema-rejected', true, 'INVALID_ARGS'),
+          ],
+        }
+      }
+      return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-schema-repaired') }
+    },
+    async close() {},
+  },
+})
+const schemaRepairedDecision = await schemaRejectedThenRepaired.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-schema-repair', workspace, request: { text: 'Find hotels' } },
+})
+assertRuntimeMaterializedOperation(schemaRepairedDecision, 'search.run', {}, task, 'one schema-shaped rejection is retried once and the repaired call is accepted')
+assert.equal(schemaRepairRuns, 2, 'schema rejection consumes a bounded retry attempt')
+await schemaRejectedThenRepaired.close()
+
 const invalidWithoutSchemaRejection = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run() {
@@ -2054,10 +2081,10 @@ await assert.rejects(
     task,
     turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-cross-run-invalid', workspace, request: { text: 'Find hotels' } },
   }),
-  /planner_invalid_tool_arguments/,
-  'a schema-invalid call cannot be washed into a valid action by a later provider run',
+  /planner_booking_intent_required/,
+  'a schema-invalid call gets one repair run, but a still-invalid repaired payload cannot become a valid action',
 )
-assert.equal(invalidCrossRunRuns, 1, 'event-authority schema errors fail closed without a correction run')
+assert.equal(invalidCrossRunRuns, 2, 'one bounded schema-repair retry, not an unbounded correction loop')
 await invalidCrossRun.close()
 
 const confirmedTask: BookingCopilotTaskState = {
