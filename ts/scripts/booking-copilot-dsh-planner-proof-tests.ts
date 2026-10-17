@@ -983,6 +983,33 @@ assertRuntimeMaterializedOperation(schemaRepairedDecision, 'search.run', {}, tas
 assert.equal(schemaRepairRuns, 2, 'schema rejection consumes a bounded retry attempt')
 await schemaRejectedThenRepaired.close()
 
+let repeatedSchemaRejectionRuns = 0
+const repeatedSchemaRejections = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      repeatedSchemaRejectionRuns += 1
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', invalidCallArguments, 'call-repeated-schema-rejection'),
+          toolResult('call-repeated-schema-rejection', true, 'INVALID_ARGS'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  repeatedSchemaRejections.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-repeated-schema-rejection', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_invalid_typed_decision/,
+  'a schema-invalid repair must fail closed',
+)
+assert.equal(repeatedSchemaRejectionRuns, 2, 'a turn gets only one schema repair retry even if the repair is rejected again')
+await repeatedSchemaRejections.close()
+
 const invalidWithoutSchemaRejection = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run() {

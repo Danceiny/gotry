@@ -1771,6 +1771,7 @@ export async function createDshEmbeddedBookingPlanner(
           // bounded planner attempt. Any returned decision crosses the same
           // typed authority path.
           let attempt = 0
+          let schemaRepairAttempted = false
           let nextPrompt = plannerPrompt(turn, task, options.now)
           // A run that goes silent must not be allowed to silently consume the
           // whole turn deadline: the idle stall budget fires only when the run
@@ -1806,7 +1807,8 @@ export async function createDshEmbeddedBookingPlanner(
                 // retry once with a stricter prompt on the same session
                 // instead of surfacing PLANNER_PROVIDER_RESPONSE_INVALID to the
                 // user. Safety errors and unproven rejections still fail closed.
-                if (schemaRejectionsThisRun > 0 && attempt < 3 && isSchemaShapeError(scanError)) {
+                if (!schemaRepairAttempted && schemaRejectionsThisRun > 0 && attempt < 3 && isSchemaShapeError(scanError)) {
+                  schemaRepairAttempted = true
                   console.error('[booking-copilot] planner tool call failed schema validation; retrying with a repair prompt:', JSON.stringify({
                     attempt, schemaRejectionsThisRun,
                   }))
