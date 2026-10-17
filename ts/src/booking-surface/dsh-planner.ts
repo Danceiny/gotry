@@ -1793,10 +1793,28 @@ export async function createDshEmbeddedBookingPlanner(
                 deadlineAt,
               )
               modelStepCount += observedModelStepCount(result.events)
-              schemaRejectedCallCount += result.events
+              const schemaRejectionsThisRun = result.events
                 .map((event, index) => toolResultObservation(event, index))
                 .filter((observation) => observation?.kind === 'schema-rejection').length
-              decisions = scanDshToolDecisionEvents(result.events, task)
+              schemaRejectedCallCount += schemaRejectionsThisRun
+              try {
+                decisions = scanDshToolDecisionEvents(result.events, task)
+              } catch (scanError) {
+                // hotel-be#33640: a provider can emit a tool call whose
+                // arguments miss the declared schema and then stop. Treat one
+                // schema-shaped rejection as a repairable provider mistake:
+                // retry once with a stricter prompt on the same session
+                // instead of surfacing PLANNER_PROVIDER_RESPONSE_INVALID to the
+                // user. Safety errors and unproven rejections still fail closed.
+                if (schemaRejectionsThisRun > 0 && attempt < 3 && isSchemaShapeError(scanError)) {
+                  console.error('[booking-copilot] planner tool call failed schema validation; retrying with a repair prompt:', JSON.stringify({
+                    attempt, schemaRejectionsThisRun,
+                  }))
+                  nextPrompt = 'Your previous booking capability tool call was rejected because its arguments did not match the declared parameter schema. Emit exactly one corrected booking capability tool call that satisfies the schema; do not repeat the rejected arguments and do not add prose.'
+                  continue
+                }
+                throw scanError
+              }
               // A valid capability decision is already receipt-gated and is
               // the authority for this interval. Some providers fail a later
               // post-tool model step; that must not erase the accepted action.
