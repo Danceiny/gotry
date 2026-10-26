@@ -122,6 +122,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [design/p6-founder-decision-brief.md](design/p6-founder-decision-brief.md) | P6 founder decision brief (issue #137, M6-2): the two hard M6 Entry prerequisites and their state, plan essentials, risks, and the yes/no/revise question list — decision support, not a receipt |
 | [design/m5-supplier-agreement-matrix.md](design/m5-supplier-agreement-matrix.md) | M5-0 HotelByte supply agreement fillable matrix (issue #136): pinned engineering facts plus A/C–J named-value fields, and how a filled matrix flows into M5 Entry |
 | [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate production proposal (issue #225/#136): HotelByte versions/artifacts, trusted receipt issuance/consumption authority, approval_claims persistence, query-miss stays unknown, reconciliation/compensation/disclosure |
+| [design/aaas-security-design.md](design/aaas-security-design.md) | AaaS threat model (proposal, #674 A0): assets, trust boundaries, cross-tenant/credential/DoS threats, the control for each and the phase that proves it |
 | [design/fact-writegate-seam.md](design/fact-writegate-seam.md) | fact-anchor × M5 WriteGate seam (issue #303, #273 sub-slice): read-path gate vs write-path gate contracts, five-step minimal chain, non-success write receipts fail closed, depends on #136/#231, no unsealing before M5 Entry |
 | [design/flyai-supplier-skill-design.md](design/flyai-supplier-skill-design.md) | Eight FlyAI capabilities, local credentials and evidence boundaries |
 | [design/effect-interpreter.md](design/effect-interpreter.md) | Effect interpreter design (accepted, ADR-18): vocabulary/resilience strategy table/decision log |
@@ -142,6 +143,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 
 | Document | Concern |
 |---|---|
+| [rfc/aaas-rfc.md](rfc/aaas-rfc.md) | AaaS RFC (proposal, #674 A0): keyed single writer per tenant, tenant model, durability and RPO, deployment topology, ADR re-review |
 | [rfc/transactional-state-rfc.md](rfc/transactional-state-rfc.md) | Transactional state foundation RFC (accepted 2026-08-28, ADR-15) |
 | [rfc/user-session-data-rfc.md](rfc/user-session-data-rfc.md) | User session data plane RFC (approved 2026-08-28): official channel first + session backfill |
 | [rfc/loopx-inspired-upgrades-rfc.md](rfc/loopx-inspired-upgrades-rfc.md) | LoopX-inspired upgrade RFC (accepted 2026-08-27): minimal slices across four seams |

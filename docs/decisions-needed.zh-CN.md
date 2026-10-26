@@ -8,9 +8,14 @@
 > 下游：按回执推进的实现/Exit 证据与 issue gate 更新；founder YES 只满足对应决策门，不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回；按回执推进。
 
-**速览：当前没有在追的拍板项；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
+**速览：1 项在追——#674 AaaS A0 RFC 评审（八个决策，各附建议：[`rfc/aaas-rfc.md`](rfc/aaas-rfc.zh-CN.md) §8.1）；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
 
 ## 未决
+
+### #674 AaaS A0 RFC 评审（在追）
+
+**待决（founder）**：接受或修改 AaaS RFC。它提出 Q1–Q8 共八个问题，每个都附建议；回复「按建议」即全部接受。接受之后才开工 A1，在此之前运行时没有任何变化。只读事实项 F-1–F-4 并行查明，不等待决策。
+**位置**：[`rfc/aaas-rfc.md`](rfc/aaas-rfc.zh-CN.md) §8；威胁模型 [`design/aaas-security-design.md`](design/aaas-security-design.zh-CN.md)；issue #674。
 
 ### #137 P6 founder review（整体方案批准）
 
