@@ -4,7 +4,7 @@
 
 > Role: the threat model of the multi-user GoTry service — assets, actors, trust boundaries, threats, and the control and proving phase for each threat.
 > Status: proposal (A0 of [#674](https://github.com/Danceiny/gotry/issues/674), drafted 2026-10-26). It becomes living once the [AaaS RFC](../rfc/aaas-rfc.md) is accepted.
-> Upstream: [AaaS RFC](../rfc/aaas-rfc.md); [architecture](../architecture.md) §1.3 invariants and ADR-23; hotel-be deployment constraints C2, C6, C10, C13, C14, C15 and C16.
+> Upstream: [AaaS RFC](../rfc/aaas-rfc.md); [architecture](../architecture.md) §1.3 invariants and ADR-23; hotel-be deployment constraints C2, C10, C13, C15 and C16.
 > Downstream: the A2 adversarial suite, the A3 boundary ADR and failure drills, and the maintainers of the [security policy](../ops/security.md).
 > Evidence boundary: this draft is analysis, not proof. A threat counts as mitigated only when its falsification test exists and passes. Drills and fixtures prove engineering behavior only.
 
@@ -34,7 +34,6 @@
 | End user (tenant) | Authenticated by the organization's BFF | May be curious about, or hostile to, other tenants |
 | Organization BFF | Trusted to authenticate users and assert the principal | With per-organization credentials, a compromised BFF can impersonate only its own organization's users |
 | Browser extension | An untrusted transport inside an employee browser | Holds the supplier login; authenticated by organization-scoped join tickets that hotel-be issues (C16) |
-| Replica operator | Trusted with host access | Access is audited; off-node copies are encrypted |
 | Content sources | Untrusted | Supplier pages, web results and model output are data, never instructions |
 | Intranet peer | Untrusted | Relevant once the tier leaves loopback (A3) |
 
@@ -50,16 +49,15 @@ The trust boundaries are: browser to BFF (hotel-be is the authority); BFF to the
 | S-4 | Tenant B replays a handle of tenant A (`taskHandle`, `requestKey`, artifact id) | Handles are bound to principal and scope digests | Handles resolve only inside the caller's tenant ledger | A2: a foreign handle returns not-found, never another tenant's data |
 | S-5 | A bridge job of organization A runs on organization B's extension with B's supplier login, or B's result reaches A | No organization column; matching by site, origin and client id | An organization-scoped bridge ledger and owner; matching requires organization equality; organization-scoped join tickets | A2: cross-organization claims and result posts are rejected and leave no row |
 | S-6 | A stale owner keeps writing after a partition or a pause | One node, so not applicable | A lease with an epoch; epoch-scoped durable copies; a self-fencing margin | A1: a paused owner's writes after takeover never appear in the restored ledger |
-| S-7 | A bearer key is sniffed or leaked once traffic leaves loopback | Loopback only (C2); one key per surface (C13) | Per-organization credentials with mTLS or signed short-lived assertions; key rotation | A3: the boundary ADR's tests reject unauthenticated and cross-organization calls |
-| S-8 | Anyone holding the BFF key can assert any principal | Accepted while only the local BFF holds the key | Assertions signed per organization and bound to the request digest; principal digests audited | A3: an assertion for organization B signed with A's key is rejected |
+| S-7 | A bearer key is sniffed or leaked once traffic leaves loopback | Loopback only (C2); one key per surface (C13) | Per-organization credentials, with mTLS or signed short-lived assertions | A3: the boundary ADR's tests reject unauthenticated and cross-organization calls |
+| S-8 | Anyone holding the BFF key can assert any principal | Accepted while only the local BFF holds the key | Assertions signed per organization and bound to the request digest | A3: an assertion for organization B signed with A's key is rejected |
 | S-9 | Supplier login state moves into the cloud | Red line: cookie values never cross the bridge protocol (extension tests §38) | AaaS adds no server-side session store; no schema carries a cookie value | A2: a schema scan finds no cookie-value field |
 | S-10 | One tenant exhausts the LLM budget, planner workers, long-poll slots or ledger size | Request body limits; per-turn deadlines | Per-tenant and per-organization quotas; a global worker cap; typed 429 | A2: a flood from one tenant keeps another tenant's latency within budget |
 | S-11 | One tenant gets the organization's shared supplier login rate-limited or banned | Pacing per node and per site | Pacing per organization and per site, with per-tenant shares | A2: a burst from one tenant is throttled before it reaches the site |
-| S-12 | Deleted data survives in off-node copies | No off-node copies exist yet | Per-tenant data keys; forget destroys the key | A1: after forget, restoring any copy yields no readable tenant data |
-| S-13 | An operator reads tenant files | A dedicated service user and `umask 0077` (C6, C14) | Encrypted off-node copies; audited access | A3: the drill shows copies are unreadable without the tenant key |
-| S-14 | Prompt-injected content triggers cross-tenant reads or write actions | Observations are data; writes are sealed | Tools carry no tenant parameter; WriteGate unchanged | A2: injected instructions that name another tenant produce no cross-tenant read |
-| S-15 | A captured BFF request is replayed | Request keys are idempotent | Request keys scoped by tenant; assertion expiry | A2: a replay returns the original result and creates no new effect |
-| S-16 | A mixed-version fleet enables a feature some replicas lack | Feature intersection rule (ADR-23) | Ownership moves only between compatible replicas | A3: a rolling-deploy drill keeps optional features off until every replica advertises them |
+| S-12 | Deleted data survives in off-node copies | No off-node copies exist yet | Forget deletes the tenant file and its off-node copies together | A1: after forget, no copy of the tenant can be restored |
+| S-13 | Prompt-injected content triggers cross-tenant reads or write actions | Observations are data; writes are sealed | Tools carry no tenant parameter; WriteGate unchanged | A2: injected instructions that name another tenant produce no cross-tenant read |
+| S-14 | A captured BFF request is replayed | Request keys are idempotent | Request keys scoped by tenant; assertion expiry | A2: a replay returns the original result and creates no new effect |
+| S-15 | A mixed-version fleet enables a feature some replicas lack | Feature intersection rule (ADR-23) | Ownership moves only between compatible replicas | A3: a rolling-deploy drill keeps optional features off until every replica advertises them |
 
 ## 4. Security invariants
 
@@ -79,10 +77,8 @@ The trust boundaries are: browser to BFF (hotel-be is the authority); BFF to the
 | Accept a tenant id from the BFF payload | Any payload bug becomes cross-tenant access; the seam derives the tenant instead |
 | Rely on a Redis or database lock without fencing | A lost or duplicated lock would let two writers commit |
 | Store supplier cookies on the server to share logins | It violates the 2026-09-11 decision and turns the service into a login farm |
-| Forget by deletion alone, without key destruction | Copies and snapshots would keep the data |
+| Design host- and storage-level access control now: file permissions, encryption at rest, operator audit | Access control lives at the presentation layer, where every read and write already resolves one tenant at the seam; ops-level redundancy waits for a real need (founder, 2026-10-26) |
 
 ## 6. Open questions
 
-- Which signed-assertion format the BFF can issue, and who rotates its keys (A3 boundary ADR).
-- Whether hotelbyte's object store supports server-side encryption with customer-managed keys (RFC fact F-3).
-- How long off-node copies are retained before crypto-shredding becomes the only delete path (RFC Q5).
+- Which signed-assertion format the BFF can issue (A3 boundary ADR).

@@ -16,7 +16,7 @@
 - **Durability.** Declare the RPO instead of implying "no loss". Asynchronous off-node streaming (an RPO of seconds) is admissible while writes stay sealed. RPO = 0 becomes a precondition for the WriteGate outbox before M5 can unseal on AaaS.
 - **Topology.** A dedicated intranet gotry tier with N replicas and tenant-affine routing sits behind the BFF. A new boundary ADR replaces C2 for that tier. The browser-reachable surface stays zero (C16).
 - **ADR re-review.** ADR-14, ADR-15, ADR-17 and ADR-23 hold with the additions in §5. ADR-16 stays frozen, and its deferred sync and claim items activate.
-- **Decision request.** Answer Q1–Q8 in §8.1. A1 starts only after acceptance. Facts F-1–F-4 are established read-only in parallel.
+- **Decision request.** Answer Q1–Q7 in §8.1. A1 starts only after acceptance. Facts F-1–F-4 are established read-only in parallel.
 
 ## 1. Problem
 
@@ -63,8 +63,9 @@ The goal: many users, each under their own identity, call one cloud GoTry servic
 - The M3 evidence gate ([#22](https://github.com/Danceiny/gotry/issues/22)) is not bypassed. AaaS is a parallel engineering line.
 - M6 commercial multi-tenancy (sponsors) stays behind [#137](https://github.com/Danceiny/gotry/issues/137).
 - No Python surface and no TS↔Python bridge. The dsh harness session layer is not modified.
+- Access control lives at the presentation layer. Host- and storage-level controls (file permissions, encryption at rest, operator audit) are not designed ahead of need (founder, 2026-10-26).
 
-**Scope of AaaS v1.** The `gotry-backend` surfaces (booking-copilot, session bridge, executor) become multi-tenant and multi-replica. A hosted multi-user form of the conversational dsh agent is a later step behind its own decision (Q7), because dsh is a single-user harness.
+**Scope of AaaS v1.** The `gotry-backend` surfaces (booking-copilot, session bridge, executor) become multi-tenant and multi-replica. A hosted multi-user form of the conversational dsh agent is a later step behind its own decision (Q6), because dsh is a single-user harness.
 
 ## 3. State-layer options
 
@@ -152,7 +153,7 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 - **Why D-b needs ledger work.** Not every authoritative row is an event today. `workflow_steps` intent and done rows change without an event, so an event-only copy would restore runs without their step results. D-b therefore needs page-level capture or event-complete step logs, and both touch the kernel.
 - **Restore verification.** A restored copy must pass `integrity_check`, its fold must equal its direct read, and its event sequence must be a prefix of the source (the drill D properties).
 - **Rollback.** Restoring a tenant to an earlier snapshot uses the same verified restore path and is itself an epoch bump.
-- **Forget across copies.** Red line 6 requires that delete means delete. Proposal: a per-tenant data key encrypts off-node copies, so forget deletes the file and destroys the key (Q5).
+- **Forget across copies.** Red line 6 requires that delete means delete: forget deletes the tenant's ledger and its off-node copies together.
 
 ### 4.4 Identity, authorization and quotas (A2)
 
@@ -166,11 +167,11 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 
 - **Target.** A dedicated gotry tier of N ≥ 2 replicas on the intranet, behind the BFF. Any replica accepts a request and forwards it to the tenant's owner, or acquires ownership when the lease is free. A tenant's planner sessions run on its owner replica.
 - **Routing.** Tenant-affine consistent hashing on `tenant_id`, at the BFF or in a gotry-side router, keeps ownership churn low.
-- **Boundary.** A new ADR replaces C2 for this tier: an intranet bind, a network ACL limited to BFF hosts, per-organization credentials, never in public nginx, and never browser-reachable (C16 unchanged). It also amends C1 if the durability medium needs a sidecar.
+- **Boundary.** A new ADR replaces C2 for this tier: an intranet bind, per-organization credentials, never in public nginx, and never browser-reachable (C16 unchanged). It also amends C1 if the durability medium needs a sidecar.
 - **Bridge.** The same lease pattern applies per organization. An extension long-poll that lands on any replica is forwarded to the organization's bridge owner. Job matching adds organization equality.
 - **Observability.** Per-tenant and per-organization metrics keyed by the HMAC id, lease and epoch events, replication lag, and quota rejections; no PII.
 - **Rolling deploys.** Ownership moves only between replicas with compatible schema and feature sets, by the ADR-23 intersection rule.
-- **Transitional alternative (Q6).** Keep per-node loopback instances, add tenant-sticky routing in hotel-be, and share the durable store. This changes fewer boundaries, but scaling stays coupled to hotel-be nodes.
+- **Transitional alternative (Q5).** Keep per-node loopback instances, add tenant-sticky routing in hotel-be, and share the durable store. This changes fewer boundaries, but scaling stays coupled to hotel-be nodes.
 
 ### 4.6 Failure modes
 
@@ -191,7 +192,7 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 ### 4.7 Leaving the per-node islands
 
 - **Inventory first (F-2).** Read-only counts of tenants, event kinds and files in each node's state roots.
-- **Booking Copilot history.** Tasks are short-lived. Proposal: no migration. New tasks go to tenant ledgers; node ledgers stay read-only for audit and are archived later (Q8).
+- **Booking Copilot history.** Tasks are short-lived. Proposal: no migration. New tasks go to tenant ledgers; node ledgers stay read-only for audit and are archived later (Q7).
 - **No inference.** Events already recorded under `local` are never re-attributed by guesswork (ADR-16). Any move uses the authorized repair procedure of [#254](https://github.com/Danceiny/gotry/issues/254).
 
 ## 5. ADR re-review (kickoff)
@@ -223,7 +224,7 @@ The draft lives in [AaaS security design](../design/aaas-security-design.md). Th
 
 | Phase | Deliverable | Exit evidence | If stopped |
 |---|---|---|---|
-| A0 design | This RFC, the ADR re-review, the threat model, document reconciliation, facts F-1–F-4 | The founder accepts the RFC (Q1–Q8 answered) | D-15 records the met trigger; nothing changes at runtime |
+| A0 design | This RFC, the ADR re-review, the threat model, document reconciliation, facts F-1–F-4 | The founder accepts the RFC (Q1–Q7 answered) | D-15 records the met trigger; nothing changes at runtime |
 | A1 state layer | Tenant router and leases outside the kernel; epoch-scoped copies; restore and verification; offline concurrency and fault-injection suites on isolated state roots | Suites green; every #275 checklist bullet mapped to a passing test or a recorded decision | Not deployed; per-node islands unchanged |
 | A2 identity and quotas | Seam-derived tenants, organization keys, quotas and metering | Adversarial suite: every cross-tenant read and write rejected | Single-organization deployment only |
 | A3 deployment | Intranet tier with N replicas, the boundary ADR, observability | UAT multi-replica run plus failure drills: owner kill, partition, lease store down, object store down, restore | Roll back to per-node loopback |
@@ -233,7 +234,7 @@ Simulated drills, fixtures and offline suites never count as A3 or A4 evidence.
 
 | #275 checklist bullet | Where it closes |
 |---|---|
-| Record the triggering evidence and select one deployment topology | A0: the trigger is #674; the topology is Q6 |
+| Record the triggering evidence and select one deployment topology | A0: the trigger is #674; the topology is Q5 |
 | Define tenant ownership, fencing, idempotency, conflict resolution, backup/restore and rollback contracts | Defined in §4; proven in A1 |
 | Prove concurrent-writer and stale-claim rejection with isolated state roots and crash/reopen tests | A1 |
 | Verify backup restore and tenant isolation end to end | A1 offline; A3 for rollout evidence |
@@ -249,10 +250,9 @@ Simulated drills, fixtures and offline suites never count as A3 or A4 evidence.
 | Q2 | Make the ledger owner the person, with the principal scope as an attribute? | Yes |
 | Q3 | Which lease store? | hotel-be MySQL, one row per tenant |
 | Q4 | Which durability mode? | D-a through A3, importing Litestream after the master-outline revision; D-b before M5 on AaaS |
-| Q5 | How does forget reach off-node copies? | Per-tenant data keys with crypto-shredding |
-| Q6 | Which topology? | A dedicated intranet tier with a new boundary ADR |
-| Q7 | What is AaaS v1's scope? | The `gotry-backend` surfaces first; the hosted conversational agent later, by its own decision |
-| Q8 | What happens to the existing per-node `local` ledgers? | Archive read-only; no migration |
+| Q5 | Which topology? | A dedicated intranet tier with a new boundary ADR |
+| Q6 | What is AaaS v1's scope? | The `gotry-backend` surfaces first; the hosted conversational agent later, by its own decision |
+| Q7 | What happens to the existing per-node `local` ledgers? | Archive read-only; no migration |
 
 ### 8.2 Facts to establish before the A1 design freeze (read-only)
 
