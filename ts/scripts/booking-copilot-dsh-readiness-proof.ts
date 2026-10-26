@@ -151,11 +151,15 @@ try {
   // The local boot budget must govern its own phase. With a model-stall budget
   // wider than the boot budget, only the explicit initialize deadline can
   // settle this turn inside the asserted window; the SDK's 10s fallback or the
-  // 13.3s stall budget would both land later and fail the bound below.
+  // 16s stall budget would both land later and fail the bound below.
+  // The 24s deadline funds the fresh-port boot retry (#669) with margin, but
+  // this factory hands back its one shared port, which the boot timeout has
+  // just retired: the planner must refuse to run on it and settle typed.
   phase = 'boot_budget_bound'
   const budgetGate = gate('boot-budget')
   port = await createRealRunPort({ stateRoot: root, env, dshBin: budgetGate.dshBin, maxTokens: 512 })
-  planner = await createDshEmbeddedBookingPlanner({ runPortFactory: () => port!, turnTimeoutMs: 20_000 })
+  let budgetPortRequests = 0
+  planner = await createDshEmbeddedBookingPlanner({ runPortFactory: () => { budgetPortRequests += 1; return port! }, turnTimeoutMs: 24_000 })
   const budgetAt = Date.now()
   const budgetResultPromise = planner.plannerFactory(task).next({ turn, task })
   await until(() => existsSync(budgetGate.marker), 3_000, 'boot-budget runtime never entered startup gate')
@@ -163,13 +167,14 @@ try {
   const budgetResult = await bounded(budgetResultPromise, 15_000, 'boot budget did not settle the turn')
   const budgetElapsedMs = Date.now() - budgetAt
   assert.equal(budgetResult[0]?.kind === 'error' && budgetResult[0].error.code, 'PLANNER_BOOT_TIMEOUT')
+  assert.equal(budgetPortRequests, 2, 'the funded boot retry asked for a fresh port and was handed back the retired one')
   assert.ok(budgetElapsedMs >= PLANNER_BOOT_BUDGET_MS, `the boot budget must be consumed before it fires (${budgetElapsedMs}ms)`)
-  assert.ok(budgetElapsedMs < PLANNER_BOOT_BUDGET_MS + 6_000, `the local boot budget, not the 13.3s stall budget, must settle this turn (${budgetElapsedMs}ms)`)
+  assert.ok(budgetElapsedMs < PLANNER_BOOT_BUDGET_MS + 6_000, `the local boot budget, not the 16s stall budget, must settle this turn (${budgetElapsedMs}ms)`)
   assert.equal(requests.length, 1, 'a blocked handshake makes no provider request')
   await bounded(planner.close(), 3_000, 'boot-budget tree cleanup exceeded budget')
   planner = undefined; port = undefined
   assert.ok(!alive(budgetPids.pid) && !alive(budgetPids.workerPid), 'boot-budget runtime and worker both reaped')
-  console.log('DSH READINESS BOOT BUDGET:', JSON.stringify({ budgetMs: PLANNER_BOOT_BUDGET_MS, elapsedMs: budgetElapsedMs, code: 'PLANNER_BOOT_TIMEOUT', providerRequests: 0, treeReaped: true }))
+  console.log('DSH READINESS BOOT BUDGET:', JSON.stringify({ budgetMs: PLANNER_BOOT_BUDGET_MS, elapsedMs: budgetElapsedMs, code: 'PLANNER_BOOT_TIMEOUT', providerRequests: 0, retryRefused: true, treeReaped: true }))
 
   phase = 'initialize_failure'
   const failedMarker = join(root, 'failed-start.json')
@@ -185,6 +190,50 @@ try {
   port = undefined
   assert.ok(!alive(failed.pid) && !alive(failed.workerPid), 'failed runtime and worker both reaped')
   console.log('DSH READINESS FAILURE CLASSIFICATION:', JSON.stringify({ exitCode: failed.exitCode, signal: failed.signal, error: 'HARNESS_START_FAILED', rawStderrExposed: false, providerRequests: 0, treeReaped: true }))
+
+  // A cold first boot that exceeds the local budget is retried on a fresh
+  // runtime while the deadline still funds a viable run (#669). The first
+  // runtime stays blocked before initialize; the second is released up front,
+  // so it completes initialize and reaches the provider, which never answers.
+  // The 24s deadline funds the retry with margin on a slow host, and the 9s
+  // stall budget ends the stalled second run before a third boot fits.
+  phase = 'boot_retry_fresh_port'
+  const retryCold = gate('retry-cold')
+  const retryWarm = gate('retry-warm')
+  writeFileSync(retryWarm.release, 'release')
+  const retryPorts: DshPlannerRunPort[] = []
+  planner = await createDshEmbeddedBookingPlanner({
+    runPortFactory: async () => {
+      const dshBin = (retryPorts.length === 0 ? retryCold : retryWarm).dshBin
+      const created = await createRealRunPort({ stateRoot: root, env, dshBin, maxTokens: 512 })
+      retryPorts.push(created)
+      return created
+    },
+    turnTimeoutMs: 24_000,
+    stallSoftBudgetMs: 9_000,
+  })
+  const requestsBeforeRetry = requests.length
+  const retryAt = Date.now()
+  const retryResultPromise = planner.plannerFactory(task).next({ turn, task })
+  await until(() => existsSync(retryCold.marker), 3_000, 'cold retry runtime never entered startup gate')
+  const coldRetryPids = retryCold.pids()
+  evidence = { ...coldRetryPids, providerRequests: requests.length }
+  await until(() => existsSync(retryWarm.marker), 15_000, 'the boot timeout never retried on a fresh runtime')
+  const retriedAfterMs = Date.now() - retryAt
+  const warmRetryPids = retryWarm.pids()
+  assert.ok(retriedAfterMs >= PLANNER_BOOT_BUDGET_MS, `the retry waits for the local boot budget (${retriedAfterMs}ms)`)
+  assert.ok(retriedAfterMs < PLANNER_BOOT_BUDGET_MS + 6_000, `the local boot budget, not the SDK fallback, triggers the retry (${retriedAfterMs}ms)`)
+  assert.ok(!alive(coldRetryPids.pid) && !alive(coldRetryPids.workerPid), 'the timed-out runtime is reaped before the fresh one starts')
+  await until(() => requests.length === requestsBeforeRetry + 1, 10_000, 'the fresh runtime never reached the provider')
+  const retryResult = await bounded(retryResultPromise, 20_000, 'the retried turn did not settle')
+  const retryElapsedMs = Date.now() - retryAt
+  assert.equal(retryResult[0]?.kind === 'error' && retryResult[0].error.code, 'PLANNER_PROVIDER_TIMEOUT', 'a retried boot that reached a stalled provider is a provider timeout, not a boot timeout')
+  assert.equal(retryPorts.length, 2, 'exactly one fresh-port retry')
+  assert.equal(requests.length, requestsBeforeRetry + 1, 'only the fresh runtime made a provider request')
+  await bounded(planner.close(), 3_000, 'boot-retry tree cleanup exceeded budget')
+  planner = undefined
+  assert.ok(!alive(warmRetryPids.pid) && !alive(warmRetryPids.workerPid), 'the fresh runtime and worker are reaped on close')
+  console.log('DSH READINESS BOOT RETRY:', JSON.stringify({ budgetMs: PLANNER_BOOT_BUDGET_MS, retriedAfterMs, elapsedMs: retryElapsedMs, code: 'PLANNER_PROVIDER_TIMEOUT', ports: retryPorts.length, providerRequests: 1, treeReaped: true }))
 
   // Opt-in distribution run: boot fresh runtimes back to back so the local
   // initialize budget can be set from measured percentiles instead of a guess.
@@ -223,4 +272,4 @@ try {
   const failedCleanup = cleanup.find((result) => result.status === 'rejected')
   if (failedCleanup?.status === 'rejected') throw failedCleanup.reason
 }
-console.log('BOOKING COPILOT DSH READINESS PROOF: real initialize, provider stall, cold timeout and process cleanup OK')
+console.log('BOOKING COPILOT DSH READINESS PROOF: real initialize, provider stall, cold timeout, boot retry and process cleanup OK')

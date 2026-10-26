@@ -68,12 +68,21 @@ Two changes follow from that measurement. Neither touches the model-side budgets
 
 Measured after the change against a runtime that never answers the handshake: with a 20000 ms turn budget, so the 13333 ms soft-stall budget is wider than the boot budget, the turn settles in **6055 ms** — the boot deadline fired, the teardown ladder added about 1000 ms, and zero provider requests were made. Under the SDK fallback the same case would land near 11 s, so the bound is live rather than merely declared. The cold-start case on a 1500 ms turn budget now reports `PLANNER_BOOT_TIMEOUT` instead of the provider code. The 5000 ms value is **a cap, not an observed cost**: observed handshakes are 0.34-2.4 s.
 
+## Fresh-port boot retry (#669)
+
+[#669](https://github.com/Danceiny/gotry/pull/669) retries a cold first boot on a fresh runtime while the turn deadline still funds one viable run (12000 ms), because a failed cold boot warms the page cache the next runtime reads. It shipped without updating this proof. The second cold-startup case hands the planner one shared port, so the retry asked the factory for a fresh port and got back the port it had just retired; running that port rejected `booking_planner_run_port_closed` untyped out of `next()`. The full regression on `main` failed on this from `6599423` onward, on Node 22 and 24.
+
+- **The rule now enforced.** A fresh-port retry never runs on a port the planner has already retired. Both retry branches, boot timeout and soft stall, treat a retired port like a deadline that cannot fund a retry, and settle typed with the outcome each already uses in that case. Factories that return a new port, as production does, behave exactly as before.
+- **What the proof adds.** The second cold-startup case asserts the refused retry, and a new case shows the retry itself on real subprocesses (both in the table below).
+- **Observed locally** (Node 26, macOS): the refused-retry case settled in 6090 ms; the retry case retried after 6169 ms and settled in 15579 ms, with two runtimes and one provider request.
+
 ## Scenario results
 
 | Scenario | Required evidence and observed result |
 |---|---|
 | Same-port readiness and provider stall | Hold real CLI startup for 1800 ms; warmup remains pending and consumes zero model calls. After initialize, the request contains `booking_run_search`, reaches local SSE, and returns `PLANNER_PROVIDER_TIMEOUT` within 3000 ms. Worker and CLI exit on close. |
-| Cold startup | Keep startup blocked. The unchanged 1500 ms turn budget returns a typed **boot** timeout (`PLANNER_BOOT_TIMEOUT`, because the handshake never completed) before any provider call; both processes are reaped. A second case widens the turn budget to 20000 ms so only the 5000 ms boot deadline can settle it, and asserts that it does. |
+| Cold startup | Keep startup blocked. The unchanged 1500 ms turn budget returns a typed **boot** timeout (`PLANNER_BOOT_TIMEOUT`, because the handshake never completed) before any provider call; both processes are reaped. A second case widens the turn budget to 24000 ms so only the 5000 ms boot deadline can settle it, and asserts that it does; the fresh-port retry that budget funds is refused, because the factory hands back the port it just retired (#669). |
+| Fresh-port boot retry | The first runtime stays blocked before initialize; the second is released. After the 5000 ms boot deadline the turn retries on the fresh runtime, which completes initialize and makes exactly one provider request; against the never-answering fixture it settles as `PLANNER_PROVIDER_TIMEOUT`. The first runtime is reaped before the second starts, and the second on close. |
 | Initialize failure | Controlled CLI exit 23, signal null; warmup rejects with exactly `HARNESS_START_FAILED`. Private fixture stderr is absent from the returned error; both processes are reaped. |
 | Worker exit and caller close | Each case starts two runs and one warmup, waits until the worker has received all three, and requires all promises to reject within 1500 ms. Repeated close returns the same promise; close also reaps a TERM-resistant grandchild. |
 | Default background warmer | With default warmup enabled and both CLI startup gates blocked, close is bounded, rejects the task warmup, reaps both worker/CLI trees, and removes isolated scratch; repeated close returns the same promise; zero provider requests. |
