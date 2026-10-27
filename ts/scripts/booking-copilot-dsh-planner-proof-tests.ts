@@ -2707,6 +2707,55 @@ assert.equal(bootRetryFirstClosed, 1, 'the failed boot port is closed by the ret
 assert.ok(bootRetrySecondRuns >= 1, 'the fresh port actually ran the provider request')
 await bootRetryPlanner.close()
 
+// A fresh-port retry must never run on the port it just retired. A factory
+// that returns one shared instance hands the closed port back, and running it
+// rejects untyped out of next() (the #669 readiness-proof crash). Such a retry
+// cannot be funded, so each retry branch settles exactly as it does when the
+// deadline cannot fund one. These fakes reject like the real port once closed.
+let sharedBootFactoryCalls = 0
+let sharedBootCloses = 0
+const sharedBootPort: DshPlannerRunPort = {
+  run: () => Promise.reject(new Error(sharedBootCloses > 0 ? 'booking_planner_run_port_closed' : 'HARNESS_BOOT_TIMEOUT')),
+  async close() { sharedBootCloses += 1 },
+  bootObservation: () => undefined,
+}
+const sharedBootPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => { sharedBootFactoryCalls += 1; return sharedBootPort },
+  turnTimeoutMs: 30_000,
+} as DshEmbeddedBookingPlannerOptions & { turnTimeoutMs: number })
+const sharedBootResult = await resolveWithin(
+  sharedBootPlanner.plannerFactory(bootTimeoutTask).next({ task: bootTimeoutTask, turn: bootTimeoutTurn }),
+  250,
+)
+assert.notDeepEqual(sharedBootResult, { testDeadline: true }, 'a refused boot retry settles inside the turn deadline')
+assert.equal((sharedBootResult as any)[0]?.error?.code, 'PLANNER_BOOT_TIMEOUT', 'a boot retry handed its own retired port settles as the typed boot timeout')
+assert.equal(sharedBootFactoryCalls, 2, 'the boot retry asked the factory for a fresh port once')
+assert.equal(sharedBootCloses, 1, 'the retired port is closed exactly once and never run again')
+await sharedBootPlanner.close()
+
+let sharedStallFactoryCalls = 0
+let sharedStallCloses = 0
+const sharedStallPort: DshPlannerRunPort = {
+  run: () => sharedStallCloses > 0
+    ? Promise.reject(new Error('booking_planner_run_port_closed'))
+    : new Promise<DshPlannerRunResult>((_resolve) => undefined),
+  async close() { sharedStallCloses += 1 },
+}
+const sharedStallPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => { sharedStallFactoryCalls += 1; return sharedStallPort },
+  turnTimeoutMs: 30_000,
+  stallSoftBudgetMs: 20,
+} as DshEmbeddedBookingPlannerOptions & { turnTimeoutMs: number })
+const sharedStallResult = await resolveWithin(
+  sharedStallPlanner.plannerFactory(bootTimeoutTask).next({ task: bootTimeoutTask, turn: bootTimeoutTurn }),
+  500,
+)
+assert.notDeepEqual(sharedStallResult, { testDeadline: true }, 'a refused stall retry settles inside the turn deadline')
+assert.equal((sharedStallResult as any)[0]?.error?.code, 'PLANNER_PROVIDER_TIMEOUT', 'a stall retry handed its own retired port settles as the typed provider timeout')
+assert.equal(sharedStallFactoryCalls, 2, 'the stall retry asked the factory for a fresh port once')
+assert.equal(sharedStallCloses, 1, 'the stalled port is closed exactly once and never run again')
+await sharedStallPlanner.close()
+
 let taskAClosed = 0
 let taskARuns = 0
 let taskBRuns = 0
