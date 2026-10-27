@@ -1734,6 +1734,13 @@ export async function createDshEmbeddedBookingPlanner(
       void barrier.catch(() => undefined)
     }
 
+    // A fresh-port retry can only run on a runtime this planner has not
+    // already retired. A factory that hands the retired instance back (one
+    // shared port, or a cache that ignores retirement) would send the retry
+    // into a closed port, whose run() rejects untyped out of next(); the
+    // retry branches treat that like a deadline that cannot fund a retry.
+    const isRetiredPort = (port: DshPlannerRunPort): boolean => closingPorts.has(port)
+
     return {
       async next({ turn, task }) {
         if (closed) throw new Error('planner_closed')
@@ -1865,8 +1872,12 @@ export async function createDshEmbeddedBookingPlanner(
                   attempt, softStallBudgetMs, remainingMs,
                 }))
                 retire(runPort)
-                runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
+                const stallRetryPort = await beforePlannerDeadline(taskPort(), deadlineAt)
                 if (closed || sessionClosePromise) throw new Error(closed ? 'planner_closed' : 'planner_session_closed')
+                if (isRetiredPort(stallRetryPort)) {
+                  throw bootNeverCompleted(runPort) ? new PlannerBootTimeoutExceeded() : new PlannerTurnDeadlineExceeded()
+                }
+                runPort = stallRetryPort
                 // The stalled run produced no decision; it must not consume a
                 // prose-nudge attempt.
                 attempt -= 1
@@ -1888,8 +1899,10 @@ export async function createDshEmbeddedBookingPlanner(
                   attempt, bootRemainingMs,
                 }))
                 retire(runPort)
-                runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
+                const bootRetryPort = await beforePlannerDeadline(taskPort(), deadlineAt)
                 if (closed || sessionClosePromise) throw new Error(closed ? 'planner_closed' : 'planner_session_closed')
+                if (isRetiredPort(bootRetryPort)) throw new PlannerBootTimeoutExceeded()
+                runPort = bootRetryPort
                 attempt -= 1
                 continue
               }
