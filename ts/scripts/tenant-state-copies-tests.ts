@@ -540,6 +540,27 @@ try {
     assert.equal(integrityOf(ledgerDbPath(again.tenantRoot)), 'ok')
   })
 
+  await check('X3 known limit of mode D-a: a frozen-clock owner can land a snapshot between its successor taking the lease and pinning its base, and that snapshot is restored', async () => {
+    const world = makeWorld('x3')
+    const frozen = world.replicaClock()
+    const r1 = await boot(world, 'r1', { clock: frozen })
+    appendEvents(r1.ledger, 'k', 3)
+    await publishSnapshot(r1.context)
+    appendEvents(r1.ledger, 'after-takeover', 2)
+
+    world.advance(TTL + 1, [frozen])
+    // The paused owner wakes with its clock where it left it and uploads while its successor is still restoring.
+    world.durable.beforeNextList = async () => { await publishSnapshot(r1.context) }
+    const r2 = await boot(world, 'r2')
+    assert.equal(r2.lease.epoch, 2)
+    assert.deepEqual(
+      idemKeys(r2.ledger),
+      ['k-1', 'k-2', 'k-3', 'after-takeover-1', 'after-takeover-2'],
+      'KNOWN LIMIT: durability mode D-a cannot refuse an upload that lands before the base is pinned. FLIP: when the window is closed (the epoch-conditional append of mode D-b, or a seal on the previous epoch), expect only k-1..k-3 here and remove the limit from RFC section 4.3',
+    )
+    assert.equal(r2.restored.restoredFrom?.seq, 2)
+  })
+
   // ---- F: forget ----------------------------------------------------------------------------------------------
   console.log('-- F forget')
   await check('F1 forget deletes every durable copy and the local files, raises the floor, and hands the lease back', async () => {

@@ -151,6 +151,7 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 - **Why D-a suffices now.** No money-moving state exists while writes are sealed. The data at risk is the last seconds of planning turns, and the BFF can replay them with the same request key.
 - **Why D-a stops at M5.** Losing a persisted `dispatching` claim after a supplier call would re-queue the intent and allow a second booking. The [WriteGate design](../design/write-gate-production-design.md) §5.3 forbids exactly that.
 - **Why D-b needs ledger work.** Not every authoritative row is an event today. `workflow_steps` intent and done rows change without an event, so an event-only copy would restore runs without their step results. D-b therefore needs page-level capture or event-complete step logs, and both touch the kernel.
+- **A window D-a cannot close.** The base pin protects everything a superseded owner uploads after its successor pinned. A paused owner whose monotonic clock is frozen (a VM freeze; a `SIGSTOP` does not stop the clock) can still land a snapshot between its successor taking the lease and pinning its base, a span about as long as the restore, and that snapshot is restored. D-b closes it, and so would a seal on the previous epoch. The A1 suites pin the window (`tenant-state-copies-tests`, X3), so closing it flips a test.
 - **Restore verification.** A restored copy must pass `integrity_check`, its fold must equal its direct read, and its event sequence must be a prefix of the source (the drill D properties).
 - **Rollback.** Restoring a tenant to an earlier snapshot uses the same verified restore path and is itself an epoch bump.
 - **Forget across copies.** Red line 6 requires that delete means delete: forget deletes the tenant's ledger and its off-node copies together.
@@ -235,9 +236,9 @@ Simulated drills, fixtures and offline suites never count as A3 or A4 evidence.
 | #275 checklist bullet | Where it closes |
 |---|---|
 | Record the triggering evidence and select one deployment topology | A0: the trigger is #674; the topology is Q5 |
-| Define tenant ownership, fencing, idempotency, conflict resolution, backup/restore and rollback contracts | Defined in §4; proven in A1 |
-| Prove concurrent-writer and stale-claim rejection with isolated state roots and crash/reopen tests | A1 |
-| Verify backup restore and tenant isolation end to end | A1 offline; A3 for rollout evidence |
+| Define tenant ownership, fencing, idempotency, conflict resolution, backup/restore and rollback contracts | Defined in §4 and proven in A1: run-all §89 (lease and fencing), §90 (copies, verified restore, forget) and §91 (router, handoff). Choosing an earlier snapshot on purpose is an operator action and waits for A3; the restore path already falls back to an older verified one (§90) |
+| Prove concurrent-writer and stale-claim rejection with isolated state roots and crash/reopen tests | A1: run-all §89 (six processes race one lease), §91 (a fenced handle refuses every call) and §92 (kills, a pause past the lease and a graceful handoff under four contending replicas) |
+| Verify backup restore and tenant isolation end to end | A1 offline: §90 (verified restore, a foreign-tenant image refused), §91 and §92 (two tenants, the ledger equal to its lineage); A3 for rollout evidence |
 | Run ledger suites, isolated smoke and full regression; sync the authority surfaces | Every phase |
 
 ## 8. Decisions, facts to establish, and risks
