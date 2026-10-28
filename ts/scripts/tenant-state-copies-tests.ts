@@ -28,6 +28,7 @@ import { DirDurableStore, type DurableStore } from '../src/tenant-state/durable-
 import {
   forgetTenant,
   publishSnapshot,
+  resolveRestorePoint,
   restoreTenantLedger,
   sweepMaskedCopies,
   verifyLedgerImage,
@@ -495,6 +496,21 @@ try {
     appendEvents(r2.ledger, 'k', 2)
     world.durable.conflictNextPut = /snap-000001\.db$/
     await assert.rejects(() => publishSnapshot(r2.context), CopyConflictError)
+  })
+
+  await check('R8 epochs past eight digits are still found, so a flapping loop that burns epochs cannot hide the copies', async () => {
+    const world = makeWorld('r8')
+    const r1 = await boot(world, 'r1')
+    appendEvents(r1.ledger, 'k', 3)
+    const manifest = await publishSnapshot(r1.context)
+    const image = await world.store.get(snapKey(1, 1, 'db')) as Uint8Array
+    const far = 100_000_001
+    const farKey = (name: string): string => `${KEY}/e${far}/${name}`
+    assert.equal(await world.store.putIfAbsent(farKey('snap-000001.db'), image), true)
+    assert.equal(await world.store.putIfAbsent(farKey('snap-000001.json'), Buffer.from(JSON.stringify({ ...manifest, epoch: far }))), true)
+    const resolution = await resolveRestorePoint(world.store, KEY, TENANT, far + 1, 0, () => undefined)
+    assert.equal(resolution.point?.manifest.epoch, far)
+    assert.equal(resolution.point?.manifest.seq, 1)
   })
 
   // ---- X: takeover ---------------------------------------------------------------------------------------

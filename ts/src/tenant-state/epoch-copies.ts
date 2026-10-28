@@ -84,7 +84,7 @@ function baseKeyOf(leaseKey: string, epoch: number): string {
 }
 
 function epochOfKey(objectKey: string): number | null {
-  const match = /\/e(\d{8})\/[^/]+$/.exec(objectKey)
+  const match = /\/e(\d{8,})\/[^/]+$/.exec(objectKey)
   return match ? Number(match[1]) : null
 }
 
