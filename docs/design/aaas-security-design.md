@@ -3,7 +3,7 @@
 # AaaS Security Design: Threat Model (Draft)
 
 > Role: the threat model of the multi-user GoTry service — assets, actors, trust boundaries, threats, and the control and proving phase for each threat.
-> Status: proposal (A0 of [#674](https://github.com/Danceiny/gotry/issues/674), drafted 2026-10-26). It becomes living once the [AaaS RFC](../rfc/aaas-rfc.md) is accepted.
+> Status: living (A0 of [#674](https://github.com/Danceiny/gotry/issues/674), drafted 2026-10-26; the [AaaS RFC](../rfc/aaas-rfc.md) was accepted 2026-10-28). A threat moves from proposed control to mitigated only when its falsification test passes.
 > Upstream: [AaaS RFC](../rfc/aaas-rfc.md); [architecture](../architecture.md) §1.3 invariants and ADR-23; hotel-be deployment constraints C2, C10, C13, C15 and C16.
 > Downstream: the A2 adversarial suite, the A3 boundary ADR and failure drills, and the maintainers of the [security policy](../ops/security.md).
 > Evidence boundary: this draft is analysis, not proof. A threat counts as mitigated only when its falsification test exists and passes. Drills and fixtures prove engineering behavior only.

@@ -3,7 +3,7 @@
 # AaaS 安全设计：威胁模型（初稿）
 
 > 定位：多用户 GoTry 服务的威胁模型——资产、参与者、信任边界、威胁，以及每项威胁的控制措施与证明阶段。
-> 状态：proposal（[#674](https://github.com/Danceiny/gotry/issues/674) 的 A0，2026-10-26 起草）。[AaaS RFC](../rfc/aaas-rfc.zh-CN.md) 被接受后转为 living。
+> 状态：living（[#674](https://github.com/Danceiny/gotry/issues/674) 的 A0，2026-10-26 起草；[AaaS RFC](../rfc/aaas-rfc.zh-CN.md) 已于 2026-10-28 接受）。一项威胁只有在其证伪测试通过之后，才从「拟议控制」转为「已缓解」。
 > 上游：[AaaS RFC](../rfc/aaas-rfc.zh-CN.md)；[architecture](../architecture.zh-CN.md) §1.3 不变量与 ADR-23；hotel-be 部署约束 C2、C10、C13、C15 与 C16。
 > 下游：A2 对抗套件、A3 边界 ADR 与故障演练，以及 [安全策略](../ops/security.zh-CN.md) 的维护者。
 > 证据边界：本稿是分析，不是证明。只有对应的证伪测试存在且通过，一项威胁才算已缓解。演练与夹具只证明工程行为。
