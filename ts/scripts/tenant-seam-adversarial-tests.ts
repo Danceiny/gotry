@@ -39,6 +39,15 @@ import {
 } from './tenant-seam-test-kit.ts'
 
 let passed = 0
+/** Waits for a state, not for time: polls until the predicate holds, and fails the check if it never does. */
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${label}`)
+    await sleep(5)
+  }
+}
+
 const only = process.env.GOTRY_TEST_ONLY
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
   if (only && !label.startsWith(only)) return
@@ -250,7 +259,7 @@ try {
     const aliceReply = service.post(body('alice'), ALICE)
     await hold.entered
     const bobReply = service.post(body('bob'), BOB)
-    await sleep(100)
+    await waitFor(() => planner.calls.length >= 2, 'bob\'s own planner invocation')
     assert.equal(planner.calls.length, 2, 'bob\'s request ran its own planner invocation instead of joining alice\'s flight')
     hold.open()
     const [alice, bob] = await Promise.all([aliceReply, bobReply])
@@ -592,7 +601,7 @@ try {
     const turn = (n: number) => userTurn(`task-f4-${n}`, `ctx-f4-${n}`, `${n <= 2 ? 'hold-f4 ' : ''}find hotels as alice ${n}`)
     const inFlight = [service.post(turn(1), ALICE), service.post(turn(2), ALICE)]
     await hold.entered
-    await sleep(50)
+    await waitFor(() => service.quotas.snapshot().globalActiveTurns === 2, 'both held turns to hold their slots')
     const refused = await service.post(turn(3), ALICE)
     assert.equal(refused.status, 429)
     assert.equal(refused.headers['retry-after'], '1')
@@ -636,7 +645,7 @@ try {
     const hold = planner.hold(/hot-hold/)
     const heldTurns = [1, 2].map((n) => service.post(userTurn(`task-hot-${n}`, `ctx-hot-${n}`, `hot-hold find hotels as hot ${n}`), ALICE))
     await hold.entered
-    await sleep(50)
+    await waitFor(() => service.quotas.snapshot().globalActiveTurns === 2, 'both hot turns to hold their slots')
     // Waves of 25 keep the burst inside the listen backlog of a laptop; the property does not depend on the wave size.
     const flood = []
     for (let wave = 0; wave < 8; wave += 1) {
