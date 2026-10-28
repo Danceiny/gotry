@@ -45,7 +45,7 @@ import { deriveLedgerTenantId, leaseKeyFor, tenantRootFor } from '../src/tenant-
 import { SqliteLeaseStore } from '../src/tenant-state/lease-store.ts'
 import { TenantLease } from '../src/tenant-state/tenant-lease.ts'
 import { runDurableStoreConformance } from './tenant-state-durable-conformance.ts'
-import { ManualClock, TrippingClock } from './tenant-state-test-kit.ts'
+import { FaultyDurableStore, ManualClock, TrippingClock } from './tenant-state-test-kit.ts'
 
 const ORG = 'acme'
 const ORG_KEY = Buffer.alloc(32, 9)
@@ -61,50 +61,6 @@ async function check(label: string, assertion: () => void | Promise<void>): Prom
   await assertion()
   passed += 1
   console.log(`  ok - ${label}`)
-}
-
-/** A durable store with an outage switch and one-shot failures, to cut the network at chosen moments. */
-class FaultyDurableStore implements DurableStore {
-  down = false
-  failNextPut: RegExp | null = null
-  conflictNextPut: RegExp | null = null
-  private readonly inner: DurableStore
-
-  constructor(inner: DurableStore) {
-    this.inner = inner
-  }
-
-  private gate(): void {
-    if (this.down) throw new DurableStoreUnavailableError('injected outage')
-  }
-
-  async putIfAbsent(key: string, bytes: Uint8Array): Promise<boolean> {
-    this.gate()
-    if (this.failNextPut?.test(key)) {
-      this.failNextPut = null
-      throw new DurableStoreUnavailableError(`injected failure for ${key}`)
-    }
-    if (this.conflictNextPut?.test(key)) {
-      this.conflictNextPut = null
-      return false
-    }
-    return this.inner.putIfAbsent(key, bytes)
-  }
-
-  async get(key: string): Promise<Uint8Array | null> {
-    this.gate()
-    return this.inner.get(key)
-  }
-
-  async list(prefix: string): Promise<string[]> {
-    this.gate()
-    return this.inner.list(prefix)
-  }
-
-  async deletePrefix(prefix: string): Promise<number> {
-    this.gate()
-    return this.inner.deletePrefix(prefix)
-  }
 }
 
 /** Breaks one rule of the contract: a put overwrites what exists. */

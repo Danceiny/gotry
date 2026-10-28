@@ -1,0 +1,525 @@
+/**
+ * The tenant router of the AaaS state layer (docs/rfc/aaas-rfc.md §4.2 items 5 and 6, §4.4).
+ *
+ * One replica asks the router for a tenant by `(organization, ledger tenant)`. The router acquires the
+ * lease, restores the ledger from the newest verified durable copy, and returns a handle. The handle is
+ * the only way to the tenant's ledger, and it is tenant-bound: no method takes a tenant id.
+ *
+ * A write is acknowledged only if the lease is provably held before the work and after it. `run` and
+ * `runAsync` bracket the work, and the ledger the handle exposes is a guarded view, so a long-lived
+ * consumer that keeps the ledger (a booking runtime, say) is stopped the same way: every call, including
+ * every prepared statement, first proves the lease. A write that was applied locally but not acknowledged
+ * is harmless, because a later owner restores from the durable copy and local files never survive.
+ *
+ * Reads go to the owner. A request for a tenant another replica owns fails with `LeaseHeldError`, whose
+ * record names the owner; forwarding to it belongs to the deployment layer (A3).
+ */
+
+import type Database from 'better-sqlite3'
+import type { StateLedger } from '../state-ledger.ts'
+import type { DurableStore } from './durable-store.ts'
+import {
+  forgetTenant,
+  publishSnapshot,
+  restoreTenantLedger,
+  type EpochCopyContext,
+  type RestoreResult,
+  type SnapshotManifest,
+  type SnapshotRef,
+} from './epoch-copies.ts'
+import { FencedError, LeaseLostError, RouterClosedError, TenantDrainingError } from './errors.ts'
+import { leaseKeyFor, tenantRootFor } from './ids.ts'
+import type { LeaseStore } from './lease-store.ts'
+import { systemMonotonicClock, TenantLease, type MonotonicClock } from './tenant-lease.ts'
+
+// ---- guarded views ----------------------------------------------------------------
+
+type Callable = (...args: unknown[]) => unknown
+type Gate = () => void
+
+/** An iterator that proves the lease on every step. Closing it is cleanup and always allowed. */
+function guardedIterator(iterator: Iterator<unknown>, assertHeld: Gate): IterableIterator<unknown> {
+  const guarded: IterableIterator<unknown> = {
+    next: () => {
+      assertHeld()
+      return iterator.next()
+    },
+    return: (value?: unknown) => iterator.return?.(value) ?? { done: true, value },
+    [Symbol.iterator]: () => guarded,
+  }
+  return guarded
+}
+
+/**
+ * A prepared statement behind a gate. This is a facade, not a proxy: better-sqlite3 statements carry read-only
+ * properties, among them a raw `database` handle, that a proxy would have to return unchanged and so would leak.
+ */
+function guardedStatement(statement: Database.Statement, assertHeld: Gate): object {
+  const target = statement as unknown as Record<string, Callable>
+  const facade: Record<string, unknown> = {}
+  for (const name of ['run', 'get', 'all', 'columns']) {
+    facade[name] = (...args: unknown[]) => {
+      assertHeld()
+      return Reflect.apply(target[name], statement, args)
+    }
+  }
+  facade.iterate = (...args: unknown[]) => {
+    assertHeld()
+    return guardedIterator(Reflect.apply(target.iterate, statement, args) as Iterator<unknown>, assertHeld)
+  }
+  for (const name of ['bind', 'pluck', 'expand', 'raw', 'safeIntegers']) {
+    facade[name] = (...args: unknown[]) => {
+      assertHeld()
+      Reflect.apply(target[name], statement, args)
+      return facade
+    }
+  }
+  for (const name of ['reader', 'readonly', 'source', 'busy']) {
+    Object.defineProperty(facade, name, { get: () => (statement as unknown as Record<string, unknown>)[name], enumerable: true })
+  }
+  Object.defineProperty(facade, 'database', { get: () => guardedDatabase(statement.database, assertHeld), enumerable: true })
+  return facade
+}
+
+/** A transaction function behind a gate, with its `.deferred`, `.immediate` and `.exclusive` variants. Its raw `database` handle is not passed on. */
+function guardedTransaction(transaction: Callable, assertHeld: Gate): Callable {
+  const gate = (fn: Callable): Callable => function (this: unknown, ...args: unknown[]) {
+    assertHeld()
+    return Reflect.apply(fn, this, args)
+  }
+  const guarded = gate(transaction)
+  for (const mode of ['default', 'deferred', 'immediate', 'exclusive']) {
+    const variant = (transaction as unknown as Record<string, unknown>)[mode]
+    if (typeof variant === 'function') Object.defineProperty(guarded, mode, { value: gate(variant as Callable), enumerable: true })
+  }
+  return guarded
+}
+
+/** The database of a ledger: every method proves the lease first, and statements and transactions come back guarded. */
+function guardedDatabase(db: Database.Database, assertHeld: Gate): Database.Database {
+  return new Proxy(db, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target)
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) => {
+        assertHeld()
+        const result = Reflect.apply(value as Callable, target, args)
+        if (property === 'prepare') return guardedStatement(result as Database.Statement, assertHeld)
+        if (property === 'transaction') return guardedTransaction(result as Callable, assertHeld)
+        return result
+      }
+    },
+  })
+}
+
+/** The ledger as a handle exposes it. `close` stays callable when the lease is gone, because cleanup must always be possible. */
+function guardedLedger(ledger: StateLedger, assertHeld: Gate): StateLedger {
+  return new Proxy(ledger, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target)
+      if (property === 'db') return guardedDatabase(value as Database.Database, assertHeld)
+      if (typeof value !== 'function') return value
+      if (property === 'close') return (...args: unknown[]) => Reflect.apply(value as Callable, target, args)
+      return (...args: unknown[]) => {
+        assertHeld()
+        return Reflect.apply(value as Callable, target, args)
+      }
+    },
+  })
+}
+
+// ---- events and options ---------------------------------------------------------------
+
+/** What a router reports about its tenants. Keys are `<organization>/<hmac tenant id>`: no personal data. */
+export type RouterEvent =
+  | { readonly type: 'acquired'; readonly key: string; readonly epoch: number }
+  | { readonly type: 'restored'; readonly key: string; readonly epoch: number; readonly from: SnapshotRef | null; readonly skipped: number }
+  | { readonly type: 'renewed'; readonly key: string; readonly epoch: number }
+  | { readonly type: 'renew_failed'; readonly key: string; readonly epoch: number; readonly code: string }
+  | { readonly type: 'snapshot'; readonly key: string; readonly epoch: number; readonly seq: number }
+  | { readonly type: 'snapshot_failed'; readonly key: string; readonly epoch: number; readonly code: string }
+  | { readonly type: 'lost'; readonly key: string; readonly epoch: number }
+  | { readonly type: 'released'; readonly key: string; readonly epoch: number; readonly flushed: boolean }
+
+export interface TenantRouterOptions {
+  readonly stateRoot: string
+  /** Unique per process incarnation. It is what the lease record shows as the owner, so it should also say where the replica can be reached. */
+  readonly replicaId: string
+  readonly leases: LeaseStore
+  readonly durable: DurableStore
+  readonly ttlMs?: number
+  readonly marginMs?: number
+  readonly clock?: MonotonicClock
+  /** Renew in the background every `renewEveryMs`. Suites that drive time by hand turn it off. */
+  readonly autoRenew?: boolean
+  readonly renewEveryMs?: number
+  /** Publish a snapshot this often while serving. Zero (the default) leaves snapshots to the caller and to handoff. */
+  readonly snapshotEveryMs?: number
+  readonly onEvent?: (event: RouterEvent) => void
+}
+
+export interface TenantHandle {
+  readonly organization: string
+  readonly ledgerTenant: string
+  readonly epoch: number
+  /** The snapshot this epoch started from, or `null` for an empty ledger. */
+  readonly restoredFrom: SnapshotRef | null
+  /** A guarded view: every call proves the lease first. */
+  readonly ledger: StateLedger
+  isOpen(): boolean
+  /** Runs `work` on the ledger and returns its result only if the lease is held before and after. */
+  run<T>(work: (ledger: StateLedger) => T): T
+  runAsync<T>(work: (ledger: StateLedger) => Promise<T>): Promise<T>
+  renew(): Promise<void>
+  snapshot(): Promise<SnapshotManifest>
+  /** Graceful handoff: drain, publish a final snapshot, release the lease. If the flush fails the handle keeps serving. */
+  handoff(): Promise<void>
+  /** Stops without a flush and releases the lease at once. Writes after the last snapshot are given up. */
+  abandon(): Promise<void>
+  /** Forget: every durable copy and the local files go, then the lease is handed back. */
+  forget(): Promise<{ readonly deletedObjects: number; readonly floor: number }>
+}
+
+interface HandleDeps {
+  readonly key: string
+  readonly organization: string
+  readonly ledgerTenant: string
+  readonly lease: TenantLease
+  readonly context: EpochCopyContext
+  readonly restored: RestoreResult
+  readonly autoRenew: boolean
+  readonly renewEveryMs: number
+  readonly snapshotEveryMs: number
+  emit(event: RouterEvent): void
+  detach(handle: TenantHandle): void
+}
+
+/** A refused renewal, or a lease that was released or lost, ends the tenure for good. A merely expired local deadline does not: a renewal can resume it. */
+function endsTenure(error: unknown): boolean {
+  return error instanceof LeaseLostError || (error instanceof FencedError && error.reason !== 'lease_expired_locally')
+}
+
+class OpenTenant implements TenantHandle {
+  readonly organization: string
+  readonly ledgerTenant: string
+  readonly epoch: number
+  readonly restoredFrom: SnapshotRef | null
+  readonly ledger: StateLedger
+  private readonly raw: StateLedger
+  private readonly deps: HandleDeps
+  private state: 'serving' | 'draining' | 'closed' = 'serving'
+  private inFlight = 0
+  private whenIdle: (() => void) | null = null
+  private renewTimer: ReturnType<typeof setTimeout> | null = null
+  private snapshotTimer: ReturnType<typeof setTimeout> | null = null
+  private snapshotTail: Promise<unknown> = Promise.resolve()
+  private snapshotQueued = 0
+
+  constructor(deps: HandleDeps) {
+    this.deps = deps
+    this.organization = deps.organization
+    this.ledgerTenant = deps.ledgerTenant
+    this.epoch = deps.lease.epoch
+    this.restoredFrom = deps.restored.restoredFrom
+    this.raw = deps.restored.ledger
+    // The view checks the lease only: work that began before a handoff may finish, new work is refused at `run`.
+    this.ledger = guardedLedger(this.raw, () => deps.lease.assertHeld())
+  }
+
+  isOpen(): boolean {
+    return this.state === 'serving'
+  }
+
+  /** Called once by the router, after the handle is registered. */
+  begin(): void {
+    this.scheduleRenewal()
+    this.scheduleSnapshot()
+  }
+
+  run<T>(work: (ledger: StateLedger) => T): T {
+    this.assertServing()
+    const result = work(this.ledger)
+    this.deps.lease.assertHeld()
+    return result
+  }
+
+  async runAsync<T>(work: (ledger: StateLedger) => Promise<T>): Promise<T> {
+    this.assertServing()
+    this.inFlight += 1
+    try {
+      const result = await work(this.ledger)
+      this.deps.lease.assertHeld()
+      return result
+    } finally {
+      this.inFlight -= 1
+      if (this.inFlight === 0) this.whenIdle?.()
+    }
+  }
+
+  async renew(): Promise<void> {
+    try {
+      await this.deps.lease.renew()
+      this.emit({ type: 'renewed', key: this.deps.key, epoch: this.epoch })
+    } catch (error) {
+      if (endsTenure(error)) this.markLost()
+      throw error
+    }
+  }
+
+  snapshot(): Promise<SnapshotManifest> {
+    this.snapshotQueued += 1
+    const run = this.snapshotTail.then(() => this.publishNow(), () => this.publishNow())
+    this.snapshotTail = run.catch(() => undefined).finally(() => { this.snapshotQueued -= 1 })
+    return run
+  }
+
+  async handoff(): Promise<void> {
+    if (this.state === 'closed') return
+    if (this.state === 'draining') throw new TenantDrainingError(this.deps.key)
+    this.state = 'draining'
+    this.stopTimers()
+    try {
+      await this.idle()
+      await this.snapshot()
+    } catch (error) {
+      // A flush that failed for want of a store leaves the tenant serving; one that failed because the lease is gone ends it.
+      if (endsTenure(error)) this.markLost()
+      else {
+        this.state = 'serving'
+        this.begin()
+      }
+      throw error
+    }
+    await this.finish(true)
+  }
+
+  async abandon(): Promise<void> {
+    if (this.state === 'closed') return
+    this.stopTimers()
+    await this.finish(false)
+  }
+
+  async forget(): Promise<{ readonly deletedObjects: number; readonly floor: number }> {
+    this.deps.lease.assertHeld()
+    this.stopTimers()
+    this.state = 'closed'
+    this.closeLedger()
+    this.deps.detach(this)
+    const outcome = await forgetTenant(this.deps.context)
+    this.emit({ type: 'released', key: this.deps.key, epoch: this.epoch, flushed: false })
+    return outcome
+  }
+
+  private assertServing(): void {
+    if (this.state === 'draining') throw new TenantDrainingError(this.deps.key)
+    this.deps.lease.assertHeld()
+  }
+
+  private emit(event: RouterEvent): void {
+    try {
+      this.deps.emit(event)
+    } catch {
+      // A broken observer must never take a tenant down.
+    }
+  }
+
+  private async publishNow(): Promise<SnapshotManifest> {
+    try {
+      const manifest = await publishSnapshot(this.deps.context)
+      this.emit({ type: 'snapshot', key: this.deps.key, epoch: this.epoch, seq: manifest.seq })
+      return manifest
+    } catch (error) {
+      this.emit({ type: 'snapshot_failed', key: this.deps.key, epoch: this.epoch, code: (error as { code?: string }).code ?? 'unknown' })
+      throw error
+    }
+  }
+
+  private idle(): Promise<void> {
+    if (this.inFlight === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => { this.whenIdle = () => { this.whenIdle = null; resolve() } })
+  }
+
+  private closeLedger(): void {
+    try {
+      this.raw.close()
+    } catch {
+      // Already closed.
+    }
+  }
+
+  private async finish(flushed: boolean): Promise<void> {
+    this.state = 'closed'
+    this.stopTimers()
+    this.closeLedger()
+    this.deps.detach(this)
+    try {
+      await this.deps.lease.release()
+    } finally {
+      this.emit({ type: 'released', key: this.deps.key, epoch: this.epoch, flushed })
+    }
+  }
+
+  /** The lease is gone for good: stop serving, close the ledger, leave the stale local file to be replaced by the next restore. */
+  private markLost(): void {
+    if (this.state === 'closed') return
+    this.state = 'closed'
+    this.stopTimers()
+    this.closeLedger()
+    this.deps.detach(this)
+    this.emit({ type: 'lost', key: this.deps.key, epoch: this.epoch })
+  }
+
+  private stopTimers(): void {
+    if (this.renewTimer) clearTimeout(this.renewTimer)
+    if (this.snapshotTimer) clearTimeout(this.snapshotTimer)
+    this.renewTimer = null
+    this.snapshotTimer = null
+  }
+
+  private scheduleRenewal(): void {
+    if (!this.deps.autoRenew || this.state === 'closed') return
+    this.renewTimer = setTimeout(() => { void this.renewTick() }, this.deps.renewEveryMs)
+    this.renewTimer.unref()
+  }
+
+  private async renewTick(): Promise<void> {
+    this.renewTimer = null
+    try {
+      await this.renew()
+    } catch (error) {
+      if (this.state === 'closed') return
+      this.emit({ type: 'renew_failed', key: this.deps.key, epoch: this.epoch, code: (error as { code?: string }).code ?? 'unknown' })
+    }
+    this.scheduleRenewal()
+  }
+
+  private scheduleSnapshot(): void {
+    if (this.deps.snapshotEveryMs <= 0 || this.state === 'closed') return
+    this.snapshotTimer = setTimeout(() => { void this.snapshotTick() }, this.deps.snapshotEveryMs)
+    this.snapshotTimer.unref()
+  }
+
+  private async snapshotTick(): Promise<void> {
+    this.snapshotTimer = null
+    if (this.snapshotQueued === 0) await this.snapshot().catch(() => undefined)
+    this.scheduleSnapshot()
+  }
+}
+
+// ---- the router -------------------------------------------------------------------------
+
+const DEFAULT_TTL_MS = 10_000
+const DEFAULT_MARGIN_MS = 2_000
+
+export class TenantRouter {
+  private readonly options: TenantRouterOptions
+  private readonly clock: MonotonicClock
+  private readonly handles = new Map<string, OpenTenant>()
+  private readonly opening = new Map<string, Promise<TenantHandle>>()
+  private closed = false
+
+  constructor(options: TenantRouterOptions) {
+    if (typeof options.replicaId !== 'string' || options.replicaId.length === 0) throw new RangeError('replicaId must be a non-empty string')
+    this.options = options
+    this.clock = options.clock ?? systemMonotonicClock
+  }
+
+  /**
+   * The handle of a tenant this replica owns, acquiring the lease and restoring the ledger first if needed.
+   * Concurrent calls for one tenant share one acquisition.
+   *
+   * @throws InvalidTenantIdError for an id that is not in the fixed format, before any store or file is touched
+   * @throws LeaseHeldError when another replica owns the tenant; the record names it
+   */
+  openTenant(organization: string, ledgerTenant: string): Promise<TenantHandle> {
+    if (this.closed) return Promise.reject(new RouterClosedError())
+    let key: string
+    try {
+      key = leaseKeyFor(organization, ledgerTenant)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    const existing = this.handles.get(key)
+    if (existing?.isOpen()) return Promise.resolve(existing)
+    const pending = this.opening.get(key)
+    if (pending) return pending
+    const attempt = this.open(organization, ledgerTenant, key).finally(() => { this.opening.delete(key) })
+    this.opening.set(key, attempt)
+    return attempt
+  }
+
+  /** The open handle of a tenant, if this replica currently serves it. */
+  handleOf(organization: string, ledgerTenant: string): TenantHandle | null {
+    const existing = this.handles.get(leaseKeyFor(organization, ledgerTenant))
+    return existing?.isOpen() ? existing : null
+  }
+
+  openCount(): number {
+    return [...this.handles.values()].filter(handle => handle.isOpen()).length
+  }
+
+  /** Hands every open tenant off gracefully and refuses new ones. Resolves with the tenants whose flush failed. */
+  async close(): Promise<string[]> {
+    this.closed = true
+    const failed: string[] = []
+    for (const [key, handle] of [...this.handles]) {
+      try {
+        await handle.handoff()
+      } catch {
+        failed.push(key)
+      }
+    }
+    return failed
+  }
+
+  private async open(organization: string, ledgerTenant: string, key: string): Promise<TenantHandle> {
+    const { options } = this
+    const emit = (event: RouterEvent): void => { options.onEvent?.(event) }
+    const lease = await TenantLease.acquire({
+      store: options.leases,
+      key,
+      replicaId: options.replicaId,
+      ttlMs: options.ttlMs ?? DEFAULT_TTL_MS,
+      marginMs: options.marginMs ?? DEFAULT_MARGIN_MS,
+      clock: this.clock,
+    })
+    emit({ type: 'acquired', key, epoch: lease.epoch })
+    const context: EpochCopyContext = {
+      durable: options.durable,
+      lease,
+      organization,
+      ledgerTenant,
+      tenantRoot: tenantRootFor(options.stateRoot, organization, ledgerTenant),
+    }
+    let restored: RestoreResult
+    try {
+      restored = await restoreTenantLedger(context)
+    } catch (error) {
+      await lease.release().catch(() => undefined)
+      throw error
+    }
+    emit({ type: 'restored', key, epoch: lease.epoch, from: restored.restoredFrom, skipped: restored.skipped.length })
+    if (this.closed) {
+      restored.ledger.close()
+      await lease.release().catch(() => undefined)
+      throw new RouterClosedError()
+    }
+    const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
+    const handle = new OpenTenant({
+      key,
+      organization,
+      ledgerTenant,
+      lease,
+      context,
+      restored,
+      autoRenew: options.autoRenew ?? true,
+      renewEveryMs: options.renewEveryMs ?? Math.max(50, Math.floor(ttlMs / 3)),
+      snapshotEveryMs: options.snapshotEveryMs ?? 0,
+      emit,
+      detach: (gone) => { if (this.handles.get(key) === gone) this.handles.delete(key) },
+    })
+    this.handles.set(key, handle)
+    handle.begin()
+    return handle
+  }
+}
