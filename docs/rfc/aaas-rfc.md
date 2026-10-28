@@ -163,6 +163,7 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 - **Authorization at one seam.** Every handler resolves `(organization, tenant)` once, at the seam. Ledger handles are tenant-bound objects. No API accepts a raw tenant id.
 - **Quotas and metering** per tenant and per organization: concurrent turns, turn rate, LLM token and cost budget priced by the frozen table (ADR-20), bridge job rate, per-site pacing per organization, and ledger size.
 - **A2 exit suite.** Forged tenant fields, a foreign `taskHandle` or `requestKey`, path-shaped ids and cross-organization bridge results are all rejected.
+- **As built in A2.** `deriveSeamTenant` is the one place a tenant is derived: from the caller an injected `CallerAuthenticator` vouched for, into an opaque `SeamTenant` that every quota API requires. A request is authenticated, placed in its tenant, admitted against its quotas (a typed 429 before the body is read, a lease is taken or a planner starts) and served from the guarded ledger of `TenantRouter.openTenant`. The decision work runs inside `handle.runAsync`, so a handoff drains it and a lease lost mid-stream cuts the connection instead of acknowledging. The bridge ledger and job matching carry an organization. How the BFF proves a user's identity on the wire is not decided here: until A3 supplies a production authenticator, deployments keep running the shared-key form of the surface. Evidence: run-all §93 to §95.
 
 ### 4.5 Deployment topology (A3)
 
@@ -227,7 +228,7 @@ The draft lives in [AaaS security design](../design/aaas-security-design.md). Th
 |---|---|---|---|
 | A0 design | This RFC, the ADR re-review, the threat model, document reconciliation, facts F-1–F-4 | The founder accepts the RFC (Q1–Q7 answered) | D-15 records the met trigger; nothing changes at runtime |
 | A1 state layer | Tenant router and leases outside the kernel; epoch-scoped copies; restore and verification; offline concurrency and fault-injection suites on isolated state roots | Suites green; every #275 checklist bullet mapped to a passing test or a recorded decision | Not deployed; per-node islands unchanged |
-| A2 identity and quotas | Seam-derived tenants, organization keys, quotas and metering | Adversarial suite: every cross-tenant read and write rejected | Single-organization deployment only |
+| A2 identity and quotas | Seam-derived tenants, organization keys, quotas and metering | Adversarial suite: every cross-tenant read and write rejected (run-all §93 quotas and metering, §94 seam and surface, §95 bridge organization) | Single-organization deployment only |
 | A3 deployment | Intranet tier with N replicas, the boundary ADR, observability | UAT multi-replica run plus failure drills: owner kill, partition, lease store down, object store down, restore | Roll back to per-node loopback |
 | A4 production | The first real second user: hotelbyte employees | Production multi-user evidence; D-15 moves to the debt archive | Stay at A3 on UAT |
 
