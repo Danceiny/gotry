@@ -33,6 +33,7 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createMockLlm } from '../src/mock-llm.ts'
 import { createOpenAICompatLlm, type LlmUsageTracker } from '../src/dsh-llm.ts'
+import { loadPriceTable, priceRunCost } from '../src/llm-price-table.ts'
 import { newState, runTurn } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import { realtimeSolvePort } from '../src/realtime-pricing.ts'
@@ -72,10 +73,6 @@ function sha256Of(value: unknown): string {
   return createHash('sha256').update(canonical(value)).digest('hex')
 }
 
-function round6(value: number): number {
-  return Number(value.toFixed(6))
-}
-
 export function loadPromptSet(path: string): M3NightlyPromptSet {
   const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
   if (raw['schema_version'] !== 'gotry_m3_nightly_prompt_set_v1') {
@@ -88,133 +85,10 @@ export function loadPromptSet(path: string): M3NightlyPromptSet {
   return { schema_version: 'gotry_m3_nightly_prompt_set_v1', description: raw['description'] as string | undefined, turns: turns as string[] }
 }
 
-export interface PriceEntry {
-  input_cache_miss_usd_per_1m_peak: number
-  input_cache_miss_usd_per_1m_offpeak: number
-  input_cache_hit_usd_per_1m_peak: number
-  input_cache_hit_usd_per_1m_offpeak: number
-  output_usd_per_1m_peak: number
-  output_usd_per_1m_offpeak: number
-}
-
-export interface LlmPriceTable {
-  schema_version: 'gotry_llm_price_table_v1' | 'gotry_llm_price_table_v2'
-  aliases: Record<string, string>
-  prices: Record<string, PriceEntry>
-}
-
-function assertPriceEntry(label: string, value: unknown): PriceEntry {
-  const entry = typeof value === 'object' && value !== null ? value as Record<string, unknown> : null
-  if (!entry) throw new Error(`${label} must be an object`)
-  for (const field of ['input_cache_miss_usd_per_1m_peak', 'input_cache_hit_usd_per_1m_peak', 'output_usd_per_1m_peak']) {
-    const num = entry[field]
-    if (typeof num !== 'number' || !Number.isFinite(num) || num < 0) {
-      throw new Error(`${label}.${field} must be a non-negative finite number`)
-    }
-  }
-  return value as PriceEntry
-}
-
-export function loadPriceTable(path: string): LlmPriceTable {
-  const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
-  const schemaVersion = raw['schema_version']
-  if (schemaVersion === 'gotry_llm_price_table_v2') {
-    return loadPriceTableV2(raw)
-  }
-  if (schemaVersion === 'gotry_llm_price_table_v1') {
-    return loadPriceTableV1(raw)
-  }
-  throw new Error(`price table schema_version must be gotry_llm_price_table_v1 or _v2, got: ${String(schemaVersion)}`)
-}
-
-function loadPriceTableV1(raw: Record<string, unknown>): LlmPriceTable {
-  const aliases = typeof raw['aliases'] === 'object' && raw['aliases'] !== null ? raw['aliases'] as Record<string, string> : {}
-  for (const [from, to] of Object.entries(aliases)) {
-    if (typeof to !== 'string') throw new Error(`price table alias ${from} must map to a model name`)
-  }
-  const prices: Record<string, PriceEntry> = {}
-  for (const [name, entry] of Object.entries(typeof raw['prices'] === 'object' && raw['prices'] !== null ? raw['prices'] as Record<string, unknown> : {})) {
-    prices[name] = assertPriceEntry(`price table entry ${name}`, entry)
-  }
-  return { schema_version: 'gotry_llm_price_table_v1', aliases, prices }
-}
-
-interface ProviderEntry {
-  family: string
-  price_strategy: 'tiered_peak_offpeak' | 'flat_no_offpeak' | string
-  api_base?: string
-  source_url?: string
-  aliases: Record<string, string>
-  models: Record<string, PriceEntry>
-}
-
-/** v2 reader:providers.<id>.models.<model> 平铺为统一的 aliases/prices 双表,外暴露 API 不变。
- *  lookup 规则:给定 model 名 →
- *    1. 若在 aliases 表中,跳到别名目标(qualified `providerId:model`);
- *    2. 否则直接以 qualified `providerId:model` 在 prices 中查找;
- *    3. 否则尝试裸 `model` 键(单 provider 时透明,如 MiniMax-M3 在 minimax:models 下唯一);
- *    4. 仍找不到 → fail-closed。 */
-function loadPriceTableV2(raw: Record<string, unknown>): LlmPriceTable {
-  const providersObj = typeof raw['providers'] === 'object' && raw['providers'] !== null ? raw['providers'] as Record<string, unknown> : null
-  if (!providersObj) throw new Error('price table v2 requires providers object')
-  const aliases: Record<string, string> = {}
-  const prices: Record<string, PriceEntry> = {}
-  for (const [providerId, rawProvider] of Object.entries(providersObj)) {
-    const provider = assertProviderEntry(`price table provider ${providerId}`, rawProvider)
-    for (const [aliasName, target] of Object.entries(provider.aliases)) {
-      if (typeof target !== 'string') throw new Error(`provider ${providerId} alias ${aliasName} must map to a model name`)
-      if (!provider.models[target]) {
-        throw new Error(`provider ${providerId} alias ${aliasName} -> ${target} has no entry; update data/llm-price-table.json via PR`)
-      }
-      aliases[aliasName] = target
-    }
-    for (const [modelName, entry] of Object.entries(provider.models)) {
-      const qualified = `${providerId}:${modelName}`
-      const validated = assertPriceEntry(`price table provider ${providerId} model ${modelName}`, entry)
-      if (prices[qualified]) throw new Error(`duplicate price table key ${qualified}`)
-      prices[qualified] = validated
-      if (prices[modelName]) throw new Error(`duplicate price table key ${modelName} (across providers, disambiguate via aliases or qualified lookup)`)
-      prices[modelName] = validated
-    }
-  }
-  return { schema_version: 'gotry_llm_price_table_v2', aliases, prices }
-}
-
-function assertProviderEntry(label: string, value: unknown): ProviderEntry {
-  const entry = typeof value === 'object' && value !== null ? value as Record<string, unknown> : null
-  if (!entry) throw new Error(`${label} must be an object`)
-  const family = entry['family']
-  if (typeof family !== 'string' || family.length === 0) throw new Error(`${label}.family must be a non-empty string`)
-  const strategy = entry['price_strategy']
-  if (strategy !== 'tiered_peak_offpeak' && strategy !== 'flat_no_offpeak') {
-    throw new Error(`${label}.price_strategy must be 'tiered_peak_offpeak' or 'flat_no_offpeak', got: ${String(strategy)}`)
-  }
-  const aliases = typeof entry['aliases'] === 'object' && entry['aliases'] !== null ? entry['aliases'] as Record<string, string> : {}
-  const models = typeof entry['models'] === 'object' && entry['models'] !== null ? entry['models'] as Record<string, PriceEntry> : {}
-  return {
-    family,
-    price_strategy: strategy,
-    api_base: typeof entry['api_base'] === 'string' ? entry['api_base'] as string : undefined,
-    source_url: typeof entry['source_url'] === 'string' ? entry['source_url'] as string : undefined,
-    aliases,
-    models,
-  }
-}
-
-/** 换算单次运行成本(peak 保守上界:全部输入按 cache miss 峰价计,只高不低)。 */
-export function priceRunCost(model: string, usage: LlmUsageTracker, table: LlmPriceTable): number {
-  if (usage.responsesMissingUsage > 0) {
-    throw new Error(`usage provider omitted usage on ${usage.responsesMissingUsage} response(s) — cost unprovable, refusing to price (fail-closed)`)
-  }
-  const alias = table.aliases[model]
-  if (alias && !table.prices[alias]) throw new Error(`price table alias ${model} -> ${alias} has no entry; update data/llm-price-table.json via PR`)
-  const entry = table.prices[alias ?? model]
-  if (!entry) throw new Error(`price table has no entry for model ${model}; update data/llm-price-table.json via PR (fail-closed, no guessed price)`)
-  const cost = (usage.inputCacheMissTokens * entry.input_cache_miss_usd_per_1m_peak
-    + usage.inputCacheHitTokens * entry.input_cache_hit_usd_per_1m_peak
-    + usage.outputTokens * entry.output_usd_per_1m_peak) / 1_000_000
-  return round6(cost)
-}
+// The frozen price table (ADR-20) and its pricing function live in src/llm-price-table.ts so the AaaS quota meter prices
+// through the same code; they are re-exported here for the nightly producer and its callers.
+export { loadPriceTable, priceRunCost }
+export type { LlmPriceTable, PriceEntry } from '../src/llm-price-table.ts'
 
 /** 记录构建(确定性:同内容同 executed_at => 同 run_key)。写入前由消费方 parseNightlyRun 校验。 */
 export function buildNightlyRunRecord(input: NightlyCoreRecord): NightlyRunRecord {
