@@ -12,6 +12,7 @@ import {
 } from './dsh-planner.ts'
 import { BookingCopilotTaskRuntime } from './runtime.ts'
 import { BOOKING_COPILOT_INGRESS_MODES, type BookingCopilotIngressMode, type BookingIngressBinding, type BookingIngressPrincipal } from './contracts.ts'
+import type { BookingTenancy, TenantPlannerProvider } from './tenancy.ts'
 import {
   startBookingCopilotServer,
   type BookingCopilotServerHandle,
@@ -42,6 +43,11 @@ export interface BookingCopilotStartupDependencies {
   /** Optional in-process BFF identity seam; standalone use is bound-turn-only. */
   ingressBinding?: BookingIngressBinding
   principal?: BookingIngressPrincipal
+  /**
+   * The multi-tenant form (AaaS). When present, no shared ledger, runtime, planner or principal is created: every
+   * request is authenticated and placed in its own tenant by the tenancy, which this process then owns and closes.
+   */
+  tenancy?: BookingTenancy
   startServer(options: BookingCopilotServerOptions): Promise<BookingCopilotServerHandle>
 }
 
@@ -97,6 +103,101 @@ export function resolveBookingCopilotStartupConfig(
   }
 }
 
+export interface BookingCopilotTenantStartupConfig {
+  host: string
+  port: number
+  artifactId?: string
+  /** Set only when the environment names a mode explicitly; it must then agree with the tenancy. */
+  ingressMode?: BookingCopilotIngressMode
+}
+
+/** The listener settings of the multi-tenant form. There is no deployment key and no shared state root: the tenancy holds both roles. */
+export function resolveBookingCopilotTenantStartupConfig(
+  env: Record<string, string | undefined> = process.env,
+): BookingCopilotTenantStartupConfig {
+  const artifactId = env.GOTRY_BOOKING_COPILOT_ARTIFACT_ID || undefined
+  if (artifactId !== undefined && !/^[0-9a-f]{40}$/.test(artifactId)) {
+    throw new Error('booking_copilot_artifact_id_invalid')
+  }
+  const rawIngressMode = env.GOTRY_BOOKING_COPILOT_INGRESS_MODE
+  if (rawIngressMode !== undefined && rawIngressMode !== '' && !(BOOKING_COPILOT_INGRESS_MODES as readonly string[]).includes(rawIngressMode)) {
+    throw new Error('booking_copilot_ingress_mode_invalid')
+  }
+  return {
+    host: env.GOTRY_BOOKING_COPILOT_HOST || '127.0.0.1',
+    port: parsePort(env.GOTRY_BOOKING_COPILOT_PORT),
+    ...(artifactId === undefined ? {} : { artifactId }),
+    ...(rawIngressMode === undefined || rawIngressMode === '' ? {} : { ingressMode: rawIngressMode as BookingCopilotIngressMode }),
+  }
+}
+
+/**
+ * One planner per tenant, each rooted in that tenant's own directory, so planner sessions and working files never sit
+ * beside another tenant's. Planners are created lazily by the dsh adapter (no process starts until a session needs one).
+ * The dsh adapter does not report token usage yet, so until it does every invocation is charged the quota policy's
+ * worst case (`TenantQuotas.chargeUnprovenInvocation`).
+ */
+export function createDshTenantPlannerProvider(
+  base: Omit<DshEmbeddedBookingPlannerOptions, 'stateRoot'>,
+  createPlanner: (options: DshEmbeddedBookingPlannerOptions) => Promise<DshEmbeddedBookingPlannerHandle> = createDshEmbeddedBookingPlanner,
+): TenantPlannerProvider {
+  const handles: DshEmbeddedBookingPlannerHandle[] = []
+  return {
+    async forTenant(context) {
+      const handle = await createPlanner({ ...base, stateRoot: context.tenantRoot })
+      handles.push(handle)
+      return handle.plannerFactory
+    },
+    async close() {
+      const failures: unknown[] = []
+      for (const handle of handles.splice(0)) {
+        try { await handle.close() } catch (error) { failures.push(error) }
+      }
+      if (failures.length === 1) throw failures[0]
+      if (failures.length > 1) throw new AggregateError(failures, 'booking_copilot_planner_shutdown_failed')
+    },
+  }
+}
+
+async function startTenantCopilot(
+  env: Record<string, string | undefined>,
+  dependencies: BookingCopilotStartupDependencies,
+  tenancy: BookingTenancy,
+): Promise<BookingCopilotStartupHandle> {
+  if (dependencies.ingressBinding || dependencies.principal) throw new Error('booking_copilot_tenancy_shared_conflict')
+  const config = resolveBookingCopilotTenantStartupConfig(env)
+  if (config.ingressMode !== undefined && config.ingressMode !== tenancy.ingressMode) throw new Error('booking_copilot_ingress_mode_conflict')
+  let server: BookingCopilotServerHandle
+  try {
+    server = await dependencies.startServer({
+      tenancy,
+      ingressMode: tenancy.ingressMode,
+      host: config.host,
+      port: config.port,
+      ...(config.artifactId === undefined ? {} : { artifactId: config.artifactId }),
+    })
+  } catch (error) {
+    try { await tenancy.close() } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'booking_copilot_startup_and_cleanup_failed')
+    }
+    throw error
+  }
+  let closed = false
+  return {
+    port: server.port,
+    async close() {
+      if (closed) return
+      closed = true
+      const failures: unknown[] = []
+      // Stop taking turns and drain the ones in flight first; then give the tenants back (planners, then leases).
+      try { await server.close() } catch (error) { failures.push(error) }
+      try { await tenancy.close() } catch (error) { failures.push(error) }
+      if (failures.length === 1) throw failures[0]
+      if (failures.length > 1) throw new AggregateError(failures, 'booking_copilot_shutdown_failed')
+    },
+  }
+}
+
 async function closeAll(
   server: BookingCopilotServerHandle | undefined,
   planner: DshEmbeddedBookingPlannerHandle | undefined,
@@ -123,6 +224,7 @@ export async function startBookingCopilotFromEnvironment(
   env: Record<string, string | undefined> = process.env,
   dependencies: BookingCopilotStartupDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<BookingCopilotStartupHandle> {
+  if (dependencies.tenancy) return startTenantCopilot(env, dependencies, dependencies.tenancy)
   const config = resolveBookingCopilotStartupConfig(env)
   const activeDependencies = dependencies
   const hasIngressBinding = Boolean(activeDependencies.ingressBinding)

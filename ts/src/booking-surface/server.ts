@@ -40,8 +40,11 @@ import {
 } from './runtime.ts'
 import { validateBookingSurface } from './validation.ts'
 import { extractBookingDispatchReason, normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
+import { tenantRejection, type BookingTenancy, type TurnScope } from './tenancy.ts'
+import type { AuthenticatedCaller } from '../tenant-seam/seam.ts'
 
-export interface BookingCopilotComposition {
+/** The single-ledger form: one runtime and one planner for every caller, the deployment's shared bearer key. */
+export interface BookingSharedComposition {
   runtime: BookingCopilotTaskRuntime
   plannerFactory: BookingPlannerSessionFactory
   /** Optional BFF-owned identity binding. GoTry never accepts browser identity. */
@@ -50,11 +53,27 @@ export interface BookingCopilotComposition {
   principal?: BookingIngressPrincipal
   /** Explicit process composition mode; omitted means infer from a complete pair. */
   ingressMode?: BookingCopilotIngressMode
+  tenancy?: undefined
 }
 
-export interface BookingCopilotServerOptions extends BookingCopilotComposition {
-  /** Deployment credential shared only with the HotelByte BFF. */
-  apiKey: string
+/**
+ * The multi-tenant form (AaaS): each request is authenticated, placed in its own tenant at the seam and served from
+ * that tenant's own guarded ledger. There is no shared runtime, planner or principal to fall back on.
+ */
+export interface BookingTenantComposition {
+  tenancy: BookingTenancy
+  ingressMode?: BookingCopilotIngressMode
+  runtime?: undefined
+  plannerFactory?: undefined
+  ingressBinding?: undefined
+  principal?: undefined
+}
+
+export type BookingCopilotComposition = BookingSharedComposition | BookingTenantComposition
+
+export type BookingCopilotServerOptions = BookingCopilotComposition & {
+  /** Deployment credential shared only with the HotelByte BFF. Required for the shared form; the tenant form authenticates through its authenticator. */
+  apiKey?: string
   host?: string
   port?: number
   maxBodyBytes?: number
@@ -77,7 +96,8 @@ export interface BookingCopilotRuntimeIdentity {
 
 /** gotry-backend 模块挂载用的流量处理依赖(startBookingCopilotServer 与 backend 模块共用) */
 export interface BookingCopilotTrafficDeps {
-  apiKey: string
+  /** The shared form's bearer key. Unused by the tenant form, which authenticates through its tenancy. */
+  apiKey?: string
   composition: BookingCopilotComposition
   maxBodyBytes: number
   artifactId?: string
@@ -98,8 +118,21 @@ export function bookingCopilotTrafficHandler(deps: BookingCopilotTrafficDeps): (
       sendJson(res, 404, { error: { code: 'not_found' } })
       return
     }
-    const auth = String(req.headers.authorization ?? '')
-    if (!safeSecretEqual(auth, `Bearer ${apiKey}`)) {
+    // The one place a credential is read. The tenant form asks its authenticator, which names the caller; the shared
+    // form compares the deployment key as before. Neither reads a tenant from the request.
+    let caller: AuthenticatedCaller | null = null
+    if (composition.tenancy) {
+      try {
+        caller = await composition.tenancy.authenticate({ method: req.method ?? '', path: (req.url ?? '').split('?')[0] ?? '', headers: req.headers })
+      } catch {
+        sendJson(res, 503, { error: { code: 'authentication_unavailable' } })
+        return
+      }
+      if (!caller) {
+        sendJson(res, 401, { error: { code: 'unauthorized' } })
+        return
+      }
+    } else if (!apiKey || !safeSecretEqual(String(req.headers.authorization ?? ''), `Bearer ${apiKey}`)) {
       sendJson(res, 401, { error: { code: 'unauthorized' } })
       return
     }
@@ -154,7 +187,7 @@ export function bookingCopilotTrafficHandler(deps: BookingCopilotTrafficDeps): (
     const lifecycle = lifecycleFor(composition)
     lifecycle.acceptedRequests += 1
     try {
-      await handleBookingCopilotRequest(req, res, composition, maxBodyBytes, negotiatedBookingSurfaceFeatures(req))
+      await handleBookingCopilotRequest(req, res, composition, maxBodyBytes, negotiatedBookingSurfaceFeatures(req), caller)
     } finally {
       finishAcceptedRequest(lifecycle)
     }
@@ -230,18 +263,18 @@ function schedulePlannerSessionClose(composition: BookingCopilotComposition, ses
 }
 
 /** Detach a session from the request path and close it in the composition lifecycle. */
-function releasePlannerSession(composition: BookingCopilotComposition, taskId: string): void {
+function releasePlannerSession(composition: BookingCopilotComposition, sessionKey: string): void {
   const sessions = sessionsFor(composition)
-  const session = sessions.get(taskId)
+  const session = sessions.get(sessionKey)
   if (!session) return
-  sessions.delete(taskId)
+  sessions.delete(sessionKey)
   schedulePlannerSessionClose(composition, session)
 }
 
 async function drainPlannerSessions(composition: BookingCopilotComposition): Promise<void> {
   const lifecycle = lifecycleFor(composition)
-  for (const [taskId, session] of lifecycle.active) {
-    lifecycle.active.delete(taskId)
+  for (const [sessionKey, session] of lifecycle.active) {
+    lifecycle.active.delete(sessionKey)
     schedulePlannerSessionClose(composition, session)
   }
   while (lifecycle.closing.size > 0) {
@@ -458,7 +491,7 @@ function fallbackErrorEvent(task: BookingCopilotTaskState, code: string): Bookin
   }
 }
 
-function writeTypedError(res: ServerResponse, composition: BookingCopilotComposition, task: BookingCopilotTaskState, error: unknown, requestKey?: string, includeSubmitted = false): void {
+function writeTypedError(res: ServerResponse, runtime: BookingCopilotTaskRuntime, task: BookingCopilotTaskState, error: unknown, requestKey?: string, includeSubmitted = false): void {
   const code = normalizeBookingErrorCode(error)
   // Provider/adapter exceptions can contain response bodies, URLs or request
   // context. Preserve only the closed code and coarse thrown-value class.
@@ -469,11 +502,11 @@ function writeTypedError(res: ServerResponse, composition: BookingCopilotComposi
   try {
     const decision = { kind: 'error' as const, error: { code, message: safeBookingErrorMessage(code), retryable: false } }
     if (requestKey) {
-      const events = composition.runtime.applyDecisionBatch(task.taskId, requestKey, [decision], includeSubmitted, { suppressProgressStatuses: true })
+      const events = runtime.applyDecisionBatch(task.taskId, requestKey, [decision], includeSubmitted, { suppressProgressStatuses: true })
       for (const event of events) write(res, event)
       return
     }
-    write(res, composition.runtime.emitEvent(task.taskId, decision))
+    write(res, runtime.emitEvent(task.taskId, decision))
   } catch {
     // The stream is already committed. Emit a schema-valid, non-durable
     // typed envelope instead of silently returning an empty HTTP 200 stream.
@@ -481,11 +514,59 @@ function writeTypedError(res: ServerResponse, composition: BookingCopilotComposi
   }
 }
 
-/** Handles one already-authenticated request inside the sole HTTP listener. */
+/** The shared form's scope: the one runtime and planner of the composition, keys exactly as they were before tenants existed. */
+function sharedScope(composition: BookingSharedComposition): TurnScope {
+  const ingress = composition.ingressMode === 'bff-ingress-binding' && composition.ingressBinding && composition.principal
+    ? { binding: composition.ingressBinding, principal: composition.principal }
+    : null
+  return {
+    key: null,
+    runtime: composition.runtime,
+    plannerFactory: composition.plannerFactory,
+    ingress,
+    sessionKey: (taskId) => taskId,
+    flightKey: (parts) => JSON.stringify(parts),
+    runDecision: (work) => work(),
+    isTenantFault: () => false,
+    release: () => undefined,
+  }
+}
+
+/** Handles one already-authenticated request inside the sole HTTP listener: places it in its scope, then serves it there. */
 async function handleBookingCopilotRequest(
   req: IncomingMessage,
   res: ServerResponse,
   composition: BookingCopilotComposition,
+  maxBodyBytes: number,
+  negotiatedFeatures: readonly BookingSurfaceFeature[],
+  caller: AuthenticatedCaller | null,
+): Promise<void> {
+  let scope: TurnScope
+  if (composition.tenancy) {
+    // Derive the tenant, admit the turn against its quotas and open its guarded ledger, all before the body is read.
+    try {
+      scope = await composition.tenancy.beginTurn(caller!)
+    } catch (error) {
+      const rejection = tenantRejection(error)
+      if (rejection.retryAfterSeconds !== undefined) res.setHeader('retry-after', String(rejection.retryAfterSeconds))
+      sendJson(res, rejection.status, rejection.body)
+      return
+    }
+  } else {
+    scope = sharedScope(composition)
+  }
+  try {
+    await serveBookingTurn(req, res, composition, scope, maxBodyBytes, negotiatedFeatures)
+  } finally {
+    scope.release()
+  }
+}
+
+async function serveBookingTurn(
+  req: IncomingMessage,
+  res: ServerResponse,
+  composition: BookingCopilotComposition,
+  scope: TurnScope,
   maxBodyBytes: number,
   negotiatedFeatures: readonly BookingSurfaceFeature[],
 ): Promise<void> {
@@ -500,11 +581,11 @@ async function handleBookingCopilotRequest(
     if ((parsed as BookingCopilotTurn).kind === 'user.turn.ingress') {
       const ingress = parsed as IngressTurn
       browserRequestKey = ingress.requestKey
-      if (composition.ingressMode !== 'bff-ingress-binding' || !composition.ingressBinding || !composition.principal) {
+      if (!scope.ingress) {
         sendJson(res, 503, { error: { code: 'trusted_ingress_binding_required', mode: composition.ingressMode ?? 'bff-bound-turn-only', acceptedTurnKinds: [...BOOKING_COPILOT_ACCEPTED_TURN_KINDS] } })
         return
       }
-      const binding = await composition.ingressBinding.bind(ingress, composition.principal)
+      const binding = await scope.ingress.binding.bind(ingress, scope.ingress.principal)
       if (!validIngressBinding(binding, ingress)) { sendJson(res, 502, { error: { code: 'invalid_ingress_binding' } }); return }
       if (!validIngressApprovalAuthority(ingress, binding)) { sendJson(res, 400, { error: { code: 'invalid_ingress_approval_authority' } }); return }
       const proposedBoundWorkspace = {
@@ -518,7 +599,7 @@ async function handleBookingCopilotRequest(
         ? { text: ingress.request.text, approval: { ...ingress.request.approval } }
         : { text: ingress.request.text }
       turn = { schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION, kind: 'user.turn', taskId: binding.taskId, turnId: binding.turnId, workspace: proposedBoundWorkspace, request: boundRequest }
-      requestBinding = { requestKey: ingress.requestKey, principal: composition.principal, ...(ingress.taskHandle ? { taskHandle: ingress.taskHandle } : {}) }
+      requestBinding = { requestKey: ingress.requestKey, principal: scope.ingress.principal, ...(ingress.taskHandle ? { taskHandle: ingress.taskHandle } : {}) }
       authorityFailureStatus = 502
       const boundValid = validateBookingSurface(turn)
       if (!boundValid.ok) { sendJson(res, 502, { error: { code: 'invalid_ingress_binding', details: boundValid.errors } }); return }
@@ -534,7 +615,7 @@ async function handleBookingCopilotRequest(
 
   let task: BookingCopilotTaskState; let fresh = false; let replayKey: string | undefined; let replayEvents: BookingSurfaceEvent[] | null = null; let activeDecisionKey: string | undefined
   try {
-    const existingAtAdmission = turn.taskId ? composition.runtime.resumeTask(turn.taskId) : null
+    const existingAtAdmission = turn.taskId ? scope.runtime.resumeTask(turn.taskId) : null
     const narrowedWorkspace = narrowWorkspaceOptionalAuthority(turn.workspace, negotiatedFeatures, existingAtAdmission?.allowedActions)
     if (!narrowedWorkspace) {
       const code = authorityFailureStatus === 502 ? 'invalid_ingress_binding' : 'invalid_bound_turn_authority'
@@ -544,29 +625,29 @@ async function handleBookingCopilotRequest(
     turn = { ...turn, workspace: narrowedWorkspace }
     fresh = turn.kind === 'action.receipt.continuation' ? false : existingAtAdmission === null
     if (turn.kind === 'action.receipt.continuation') {
-      replayKey = `receipt:${turn.receipt.actionId}:${composition.runtime.receiptDigest(turn.receipt)}`
-      task = composition.runtime.continueWithReceipt(turn)
+      replayKey = `receipt:${turn.receipt.actionId}:${scope.runtime.receiptDigest(turn.receipt)}`
+      task = scope.runtime.continueWithReceipt(turn)
       if (task.awaitingApproval) {
-        replayKey = composition.runtime.approvalPresentationRequestKey(turn.taskId)
+        replayKey = scope.runtime.approvalPresentationRequestKey(turn.taskId)
       }
-      replayEvents = composition.runtime.readDecisionBatch(turn.taskId, replayKey)
-      if (!replayEvents && task.phase === 'terminal') replayEvents = composition.runtime.terminalDecisionBatch(turn.taskId, replayKey)
+      replayEvents = scope.runtime.readDecisionBatch(turn.taskId, replayKey)
+      if (!replayEvents && task.phase === 'terminal') replayEvents = scope.runtime.terminalDecisionBatch(turn.taskId, replayKey)
     } else {
       const existing = existingAtAdmission
-      if (requestBinding && turn.kind === 'user.turn') composition.runtime.assertRequestBinding(browserRequestKey!, turn, requestBinding)
+      if (requestBinding && turn.kind === 'user.turn') scope.runtime.assertRequestBinding(browserRequestKey!, turn, requestBinding)
       const requestReplayKey = existing && browserRequestKey ? `ingress:${existing.taskId}:${browserRequestKey}` : undefined
       const directReplayKey = existing && turn.kind === 'user.turn' && turn.turnId ? `turn:${existing.taskId}:${turn.turnId}` : undefined
       const stableReplayKey = requestReplayKey ?? directReplayKey
-      const stableReplay = stableReplayKey ? composition.runtime.readDecisionBatch(existing!.taskId, stableReplayKey) : null
+      const stableReplay = stableReplayKey ? scope.runtime.readDecisionBatch(existing!.taskId, stableReplayKey) : null
       if (stableReplay) {
-        if (existing && turn.kind === 'user.turn' && directReplayKey) composition.runtime.assertTurnBinding(existing.taskId, turn)
+        if (existing && turn.kind === 'user.turn' && directReplayKey) scope.runtime.assertTurnBinding(existing.taskId, turn)
         task = existing!
         replayKey = stableReplayKey
         replayEvents = stableReplay
       } else if (existing?.phase === 'terminal' || existing?.phase === 'error') {
         throw new Error('task_terminal')
       } else if (existing?.phase === 'waiting_receipt') {
-        if (turn.kind === 'user.turn' && turn.request.approval) composition.runtime.assertApprovalNotConsumed(existing.taskId, turn.request.approval)
+        if (turn.kind === 'user.turn' && turn.request.approval) scope.runtime.assertApprovalNotConsumed(existing.taskId, turn.request.approval)
         const workspace = turn.workspace as BookingWorkspaceSnapshot
         if (workspace.contextRef !== existing.contextRef || workspace.surface !== existing.surface || workspace.revision !== existing.revision || workspace.capabilities.surface !== existing.surface || !sameCapabilities(workspace.capabilities.allowedActions, existing.allowedActions)) throw new Error('task_conflict:workspace_mismatch')
         // A waiting task can only be replayed with the caller's stable turn
@@ -574,19 +655,25 @@ async function handleBookingCopilotRequest(
         // from a new user turn and must not receive an old operation batch.
         if (!turn.turnId || existing.lastTurnId !== turn.turnId) throw new Error('receipt_required')
         replayKey = browserRequestKey ? `ingress:${existing.taskId}:${browserRequestKey}` : `turn:${existing.taskId}:${existing.lastTurnId ?? existing.userTurnCount}`
-        replayEvents = composition.runtime.readDecisionBatch(existing.taskId, replayKey)
+        replayEvents = scope.runtime.readDecisionBatch(existing.taskId, replayKey)
         if (!replayEvents) throw new Error('receipt_required')
         task = existing
       } else {
-        if (existing && turn.kind === 'user.turn' && turn.request.approval) composition.runtime.assertApprovalNotConsumed(existing.taskId, turn.request.approval)
-        task = composition.runtime.startTask(turn, requestBinding)
+        if (existing && turn.kind === 'user.turn' && turn.request.approval) scope.runtime.assertApprovalNotConsumed(existing.taskId, turn.request.approval)
+        task = scope.runtime.startTask(turn, requestBinding)
         if (turn.kind === 'user.turn' && turn.taskId) {
           replayKey = browserRequestKey ? `ingress:${task.taskId}:${browserRequestKey}` : `turn:${task.taskId}:${turn.turnId ?? task.userTurnCount}`
-          replayEvents = composition.runtime.readDecisionBatch(task.taskId, replayKey)
+          replayEvents = scope.runtime.readDecisionBatch(task.taskId, replayKey)
         }
       }
     }
   } catch (error) {
+    if (scope.isTenantFault(error)) {
+      const rejection = tenantRejection(error)
+      if (rejection.retryAfterSeconds !== undefined) res.setHeader('retry-after', String(rejection.retryAfterSeconds))
+      sendJson(res, rejection.status, rejection.body)
+      return
+    }
     const code = normalizeBookingErrorCode(error)
     console.error(JSON.stringify({ code, reason: extractBookingDispatchReason(error) }))
     sendJson(res, 409, { error: { code } }); return
@@ -596,13 +683,13 @@ async function handleBookingCopilotRequest(
   res.flushHeaders()
   try {
     if (replayEvents) {
-      const progressEvents = composition.runtime.readProgressBatch(task.taskId, replayKey ?? `turn:${task.taskId}:${task.userTurnCount}`) ?? []
+      const progressEvents = scope.runtime.readProgressBatch(task.taskId, replayKey ?? `turn:${task.taskId}:${task.userTurnCount}`) ?? []
       for (const event of progressEvents) write(res, event)
       if (progressEvents.length) {
         flush(res)
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
-      if (task.phase === 'terminal' || task.phase === 'error') releasePlannerSession(composition, task.taskId)
+      if (task.phase === 'terminal' || task.phase === 'error') releasePlannerSession(composition, scope.sessionKey(task.taskId))
       for (const event of replayEvents) write(res, event)
     } else {
       const requestKey = replayKey ?? `turn:${task.taskId}:${task.userTurnCount}`
@@ -611,34 +698,37 @@ async function handleBookingCopilotRequest(
       // committed progress but before its planner flight finishes. Re-serve
       // the durable progress batch so it receives the same prefix instead of
       // exposing a terminal-only tail.
-      const newlyPersistedProgress = composition.runtime.ensureProgressBatch(task.taskId, requestKey, fresh)
+      const newlyPersistedProgress = scope.runtime.ensureProgressBatch(task.taskId, requestKey, fresh)
       const progressEvents = newlyPersistedProgress.length > 0
         ? newlyPersistedProgress
-        : (composition.runtime.readProgressBatch(task.taskId, requestKey) ?? [])
+        : (scope.runtime.readProgressBatch(task.taskId, requestKey) ?? [])
       const approval = turn.kind === 'user.turn' ? turn.request.approval : undefined
-      const flightKey = JSON.stringify([task.taskId, approval ? `approval:${bookingDigest(approval)}` : requestKey])
+      const flightKey = scope.flightKey([task.taskId, approval ? `approval:${bookingDigest(approval)}` : requestKey])
       // Register or join the decision flight before yielding after the progress
       // flush. A duplicate that observed the durable progress must never miss
       // an about-to-finish flight and pay for a second model invocation.
-      const decisionOutcome = runDecisionSingleFlight(composition, flightKey, async () => {
+      // The decision work runs inside the scope: in the tenant form that proves the lease before and after it, lets a
+      // handoff drain it, and keeps its events from reaching the client if the lease was lost meanwhile.
+      const decisionOutcome = runDecisionSingleFlight(composition, flightKey, () => scope.runDecision(async () => {
         // Cover the complementary late-join case: the prior flight may have
         // committed its exact batch and left the in-memory map between request
         // admission and this work starting.
-        const durableDecision = composition.runtime.readDecisionBatch(task.taskId, requestKey)
+        const durableDecision = scope.runtime.readDecisionBatch(task.taskId, requestKey)
         if (durableDecision) return durableDecision
         if (turn.kind === 'action.receipt.continuation' && task.awaitingApproval) {
-          return composition.runtime.applyDecisionBatch(task.taskId, requestKey, [composition.runtime.approvalQuestion(task.taskId)], false)
+          return scope.runtime.applyDecisionBatch(task.taskId, requestKey, [scope.runtime.approvalQuestion(task.taskId)], false)
         }
         const sessions = sessionsFor(composition)
-        const session = sessions.get(task.taskId) ?? composition.plannerFactory(task)
-        sessions.set(task.taskId, session)
-        const decisions = await session.next({ turn, task: composition.runtime.resumeTask(task.taskId) ?? task })
+        const sessionKey = scope.sessionKey(task.taskId)
+        const session = sessions.get(sessionKey) ?? scope.plannerFactory(task)
+        sessions.set(sessionKey, session)
+        const decisions = await session.next({ turn, task: scope.runtime.resumeTask(task.taskId) ?? task })
         const plannerDecisions = decisions.length ? decisions : [{ kind: 'error' as const, error: { code: 'PLANNER_NO_DECISION', message: 'Planner returned no typed decision.', retryable: false } }]
-        const events = composition.runtime.applyDecisionBatch(task.taskId, requestKey, plannerDecisions, fresh, { suppressProgressStatuses: true })
-        const updated = composition.runtime.resumeTask(task.taskId)
-        if (updated?.phase === 'terminal' || updated?.phase === 'error') releasePlannerSession(composition, task.taskId)
+        const events = scope.runtime.applyDecisionBatch(task.taskId, requestKey, plannerDecisions, fresh, { suppressProgressStatuses: true })
+        const updated = scope.runtime.resumeTask(task.taskId)
+        if (updated?.phase === 'terminal' || updated?.phase === 'error') releasePlannerSession(composition, sessionKey)
         return events
-      }).then(
+      })).then(
         (events) => ({ ok: true as const, events }),
         (error: unknown) => ({ ok: false as const, error }),
       )
@@ -652,52 +742,70 @@ async function handleBookingCopilotRequest(
       for (const event of outcome.events) write(res, event)
     }
   } catch (error) {
-    writeTypedError(res, composition, task, error, activeDecisionKey, fresh)
-    const updated = composition.runtime.resumeTask(task.taskId)
-    if (updated?.phase === 'terminal' || updated?.phase === 'error') releasePlannerSession(composition, task.taskId)
+    // A lease lost, fenced or handed off while the stream is open cannot be told to the client as an answer: nothing
+    // was acknowledged, so the connection is cut and the BFF retries the same request key on the next owner.
+    if (scope.isTenantFault(error)) { res.destroy(); return }
+    writeTypedError(res, scope.runtime, task, error, activeDecisionKey, fresh)
+    const updated = scope.runtime.resumeTask(task.taskId)
+    if (updated?.phase === 'terminal' || updated?.phase === 'error') releasePlannerSession(composition, scope.sessionKey(task.taskId))
   } finally { res.end() }
 }
 
 export function startBookingCopilotServer(options: BookingCopilotServerOptions): Promise<BookingCopilotServerHandle> {
-  if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
   if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
     return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
   }
-  if (!options.runtime || !options.plannerFactory) {
-    return Promise.reject(new Error('booking_copilot_runtime_and_planner_required'))
-  }
-  const hasIngressBinding = Boolean(options.ingressBinding)
-  const hasPrincipal = Boolean(options.principal)
-  if (hasIngressBinding !== hasPrincipal) {
-    return Promise.reject(new Error('booking_copilot_ingress_binding_pair_required'))
-  }
-  if (hasIngressBinding && (typeof options.ingressBinding?.bind !== 'function'
-    || typeof options.principal?.subject !== 'string' || options.principal.subject.length === 0 || options.principal.subject.length > 256
-    || typeof options.principal?.scope !== 'string' || options.principal.scope.length === 0 || options.principal.scope.length > 256)) {
-    return Promise.reject(new Error('booking_copilot_ingress_binding_invalid'))
-  }
-  const ingressMode: BookingCopilotIngressMode = options.ingressMode ?? (hasIngressBinding ? 'bff-ingress-binding' : 'bff-bound-turn-only')
-  if (!BOOKING_COPILOT_INGRESS_MODES.includes(ingressMode)) {
-    return Promise.reject(new Error('booking_copilot_ingress_mode_invalid'))
-  }
-  if (ingressMode === 'bff-ingress-binding' && !hasIngressBinding) {
-    return Promise.reject(new Error('booking_copilot_ingress_binding_required'))
-  }
-  if (ingressMode === 'bff-bound-turn-only' && hasIngressBinding) {
-    return Promise.reject(new Error('booking_copilot_ingress_mode_conflict'))
-  }
-  const composition: BookingCopilotComposition = {
-    runtime: options.runtime,
-    plannerFactory: options.plannerFactory,
-    ...(hasIngressBinding ? { ingressBinding: options.ingressBinding, principal: options.principal } : {}),
-    ingressMode,
+  let composition: BookingCopilotComposition
+  let ingressMode: BookingCopilotIngressMode
+  if (options.tenancy) {
+    // One authentication system per form: the tenant form has no shared key and no shared runtime, planner or principal.
+    if (options.apiKey) return Promise.reject(new Error('booking_copilot_tenancy_api_key_conflict'))
+    if (options.runtime || options.plannerFactory || options.ingressBinding || options.principal) {
+      return Promise.reject(new Error('booking_copilot_tenancy_shared_conflict'))
+    }
+    ingressMode = options.tenancy.ingressMode
+    if (options.ingressMode !== undefined && options.ingressMode !== ingressMode) {
+      return Promise.reject(new Error('booking_copilot_ingress_mode_conflict'))
+    }
+    composition = { tenancy: options.tenancy, ingressMode }
+  } else {
+    if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
+    if (!options.runtime || !options.plannerFactory) {
+      return Promise.reject(new Error('booking_copilot_runtime_and_planner_required'))
+    }
+    const hasIngressBinding = Boolean(options.ingressBinding)
+    const hasPrincipal = Boolean(options.principal)
+    if (hasIngressBinding !== hasPrincipal) {
+      return Promise.reject(new Error('booking_copilot_ingress_binding_pair_required'))
+    }
+    if (hasIngressBinding && (typeof options.ingressBinding?.bind !== 'function'
+      || typeof options.principal?.subject !== 'string' || options.principal.subject.length === 0 || options.principal.subject.length > 256
+      || typeof options.principal?.scope !== 'string' || options.principal.scope.length === 0 || options.principal.scope.length > 256)) {
+      return Promise.reject(new Error('booking_copilot_ingress_binding_invalid'))
+    }
+    ingressMode = options.ingressMode ?? (hasIngressBinding ? 'bff-ingress-binding' : 'bff-bound-turn-only')
+    if (!BOOKING_COPILOT_INGRESS_MODES.includes(ingressMode)) {
+      return Promise.reject(new Error('booking_copilot_ingress_mode_invalid'))
+    }
+    if (ingressMode === 'bff-ingress-binding' && !hasIngressBinding) {
+      return Promise.reject(new Error('booking_copilot_ingress_binding_required'))
+    }
+    if (ingressMode === 'bff-bound-turn-only' && hasIngressBinding) {
+      return Promise.reject(new Error('booking_copilot_ingress_mode_conflict'))
+    }
+    composition = {
+      runtime: options.runtime,
+      plannerFactory: options.plannerFactory,
+      ...(hasIngressBinding ? { ingressBinding: options.ingressBinding, principal: options.principal } : {}),
+      ingressMode,
+    }
   }
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
   const runningIdentity = runtimeIdentity()
 
   const server = createServer((req, res) => {
     void bookingCopilotTrafficHandler({
-      apiKey: options.apiKey,
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       composition,
       maxBodyBytes,
       ...(options.artifactId !== undefined ? { artifactId: options.artifactId } : {}),

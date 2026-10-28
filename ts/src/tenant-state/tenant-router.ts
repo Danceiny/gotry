@@ -464,6 +464,14 @@ export class TenantRouter {
     return [...this.handles.values()].filter(handle => handle.isOpen()).length
   }
 
+  /**
+   * The directory of one tenant on this replica: its ledger and everything that must travel with it (planner working
+   * files, tickets). A consumer that keeps per-tenant files puts them here, never beside another tenant's.
+   */
+  tenantRootOf(organization: string, ledgerTenant: string): string {
+    return tenantRootFor(this.options.stateRoot, organization, ledgerTenant)
+  }
+
   /** Hands every open tenant off gracefully and refuses new ones. Resolves with the tenants whose flush failed. */
   async close(): Promise<string[]> {
     this.closed = true
