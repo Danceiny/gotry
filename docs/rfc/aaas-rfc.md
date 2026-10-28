@@ -131,7 +131,7 @@ These are the contracts A1 must prove offline.
 
 1. **One lease per tenant.** A lease store with linearizable compare-and-set holds the record shown above.
 2. **Acquisition increments the epoch.** A replica may write a tenant's ledger only while it holds the lease. Acquisition is `CAS(epoch → epoch + 1)`; renewal keeps the epoch.
-3. **Epoch-scoped durable copies.** Each owner copies into an epoch-specific prefix. Restore always reads the prefix of the highest epoch the lease store records. Writes from a stale owner land in a dead prefix and can never become authoritative.
+3. **Epoch-scoped durable copies.** Each owner copies only into the prefix of its own epoch. A new owner restores the newest verified snapshot of the newest lineage below its own epoch, and pins that exact snapshot in its own `base.json` before it serves a write. A snapshot a superseded owner uploads after the pin sits above it and is never read; one that lands before the pin is the window described in §4.3.
 4. **Self-fencing before expiry.** An owner stops acknowledging writes at `lease_until − margin` on its monotonic clock unless it has renewed. The margin covers the agreed clock-skew bound.
 5. **Reads go to the owner.** A1 admits no stale replica reads.
 6. **Two handoff paths.** A graceful handoff drains, checkpoints, flushes the copy and releases the lease. A failure handoff waits for expiry; the new owner restores at epoch + 1.

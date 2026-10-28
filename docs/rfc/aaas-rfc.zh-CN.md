@@ -131,7 +131,7 @@ lease record: { key: "<org_id>/<tenant_id>", owner: <replica_id>, epoch: <int>, 
 
 1. **每个租户一份租约。** 一个支持可线性化 compare-and-set 的租约存储保存上面的记录。
 2. **获取即递增 epoch。** 副本只有持有租约时才能写该租户的账本。获取是 `CAS(epoch → epoch + 1)`；续约保持 epoch 不变。
-3. **按 epoch 分区的持久副本。** 每个 owner 复制到各自 epoch 的专属前缀。恢复永远读取租约存储所记录最高 epoch 的前缀。过期 owner 的写入落进死前缀，永远不可能成为权威。
+3. **按 epoch 分区的持久副本。** 每个 owner 只复制到自己 epoch 的前缀。新 owner 恢复自己 epoch 之下最新谱系的最新已验证快照，并在服务任何写入之前，把这份确切的快照钉在自己的 `base.json` 里。被取代的 owner 在钉基线之后上传的快照位于该基线之上，永远不会被读到；落在钉基线之前的那一份，就是 §4.3 描述的窗口。
 4. **到期前自我隔离。** 若未续约，owner 按自己的单调时钟在 `lease_until − margin` 时停止确认写入。margin 覆盖约定的时钟偏差上界。
 5. **读走 owner。** A1 不准入陈旧副本读。
 6. **两条交接路径。** 优雅交接：排空、checkpoint、刷完副本、释放租约。故障交接：等租约到期，新 owner 以 epoch + 1 恢复。
