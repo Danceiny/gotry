@@ -214,6 +214,7 @@ D1 需要 v0.2 修订：①§7.1 分层架构改写为 3.2 的 dsh 插件视图�
 | G3 | TREK 复用路径 | — | — | — | **已决：照着重写——以设计为参考自行实现，不引代码、不自托管（2026-08-22）** |
 | G4 | hotel-be 原子能力暴露形态 | — | — | — | **已决：CLI 方式，以 hotelbyte-cli 为基（2026-08-22）** |
 | **G5** | 内部差旅工具桥（T 系统侧，脱敏）的内部审批 | 桥接 / 不桥接（改接外部供应商） | PoC/MVP 期能力来源 | T3 前 | **保留为未来内部资产 lane**——当前产品路径 = 公共 MIT hotelbyte-cli + 进程桥（`external/hotelbyte-cli/` 公共 MIT 通道）；未来内部桥授权由 [#348](https://github.com/Danceiny/gotry/issues/348) 单独跟踪，真实授权触发前保持关闭；HotelByte 交易准入仍归 [#136](https://github.com/Danceiny/gotry/issues/136)，二者不得互代。**机械闸已落地（2026-09-11，#348）**：`ts/scripts/g5-guard.ts` + 创始人维护的授权台账 [`g5-authorization-ledger.zh-CN.md`](g5-authorization-ledger.zh-CN.md)（初始为空）对 tracked 文件中任何未授权的内部差旅桥引用 fail（run-all §58）；PR 链接待补。 |
+| G6 | AaaS：把 GoTry 做成多用户共用的单一云端 agent 服务 | 只保留本地形态 / 立项并行的 AaaS 线 | 状态层、身份、部署拓扑；任何状态层依赖先进 §2 | 2026-10-21 | **已决（2026-10-21，founder）：立项为并行工程线**（[#674](https://github.com/Danceiny/gotry/issues/674)）。写路径保持封存，不绕过 M3 证据门。状态层选型的提案见 [`rfc/aaas-rfc.zh-CN.md`](rfc/aaas-rfc.zh-CN.md)；该 RFC 被接受之前，复用矩阵保持不变。 |
 
 ---
 
