@@ -735,6 +735,10 @@ echo
 echo "=== 88. dsh-llm 请求级超时与调用方取消(issue #618:chat() 此前既无超时也不收 signal,provider 连上后不应答会让 nightly-evidence/replay-real/persona-sim 无限挂起;现为 AbortSignal.timeout(默认 300000ms,GOTRY_LLM_TIMEOUT_MS 或调用方显式值可改,非正整数忽略,超大值夹到 2^31-1 防 Node 溢出成 1ms)+调用方 signal 经 AbortSignal.any 合并,整段请求含正文读取同受约束;截断落成类型化 LlmRequestError(timeout|aborted,name 取平台既有 TimeoutError|AbortError,message 沿用 llm <kind>: 约定,cause 保留)而非挂起/吞错,非 abort 失败(HTTP 非 2xx/连接被拒/缺 key)原样不改;usage 累计与缺 usage 即成本不可证的 fail-closed 语义不变,截断调用不动 tracker;127.0.0.1 假 provider 夹具(收下连接永不应答/响应头后正文卡死/错误正文卡死/正常应答)+bounded 包装,回退修复时卡死用例只会失败不会挂起;runTurn 与 nightly-evidence 对卡死 provider 抛类型化失败且 nightly 零写入;全离线) ==="
 (cd ts && npx tsx scripts/dsh-llm-tests.ts) || FAIL=1
 
+echo
+echo "=== 89. AaaS 租户所有权核心(#674 A1.1,docs/rfc/aaas-rfc.md §4.2;位于内核之外,state-ledger.ts 不动,未接入任何运行时路径:租户 id=HMAC-SHA256(K_org,issuer‖NUL‖subject) 截 128 位定长十六进制(已知答案向量钉死算法),组织 id 与租户 id 的路径只由校验过的 id 构造——路径形·大小写·尾换行·非字符串·NUL·孤立代理项·超长·不足 32 字节密钥一律在任何文件系统调用之前拒绝,issuer 与 subject 间的分隔符防字段边界混淆/参考 SQLite 租约存储通过 LeaseStore 一致性检查(首次取得 epoch 1/未过期时拒绝他人与自身重取/续约保 epoch 并延长/他人·他 epoch·未知键的续约一律拒/过期后接管 epoch+1 且旧持有者续约·释放·遗忘全拒/过期后无人接管也不得续约复活/释放即过期并保 epoch/遗忘下限跨取得保留/ttl 越界拒),另钉租约过期的毫秒边界、存储层触发器(epoch 只进一·不退不跳,遗忘下限不降,租约行不删)与审计轨迹;一致性检查自身可证伪:三种故意写坏的存储(无 CAS·epoch 非栅栏令牌·续约不验身份)各使具名检查变红/持有者会话:本地栅栏在 sent-at+ttl−margin 一毫秒不差地触发(之前一毫秒仍持有)、续约从发送时刻重算窗口、租约存储宕机按期限 fail-closed 且续约成功可恢复、存储租约已过后的续约被拒并终结持有者、接管后旧持有者被拒、冻结时钟的局限(本地闸看不见接管,由存储拒绝兜底)、优雅释放先停确认再通知存储且幂等、释放时存储宕机仍已停确认并等租约自然过期、往返耗尽可用窗口即归还、同一持有者至多一个在途存储调用;六个真实子进程竞争同一租约文件恰一赢家(新鲜租约 epoch 1;真实过期后再竞争 epoch 2);另对源码逐点变异 16 处均使套件变红;全离线,隔离 mkdtemp,不碰任何共享状态) ==="
+(cd ts && npx tsx scripts/tenant-state-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
