@@ -61,3 +61,27 @@ export class InvalidTenantIdError extends TenantStateError {
     super('GOTRY_TENANT_ID_INVALID', message)
   }
 }
+
+/** The durable store failed or could not be reached. Replication lag grows; a stricter durability mode would refuse writes. */
+export class DurableStoreUnavailableError extends TenantStateError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super('GOTRY_TENANT_DURABLE_STORE_UNAVAILABLE', message, options)
+  }
+}
+
+/** A durable copy exists but cannot be trusted: a failed checksum, integrity, tenant or fold check. */
+export class RestoreVerificationError extends TenantStateError {
+  readonly skipped: readonly string[]
+
+  constructor(message: string, skipped: readonly string[] = []) {
+    super('GOTRY_TENANT_RESTORE_INVALID', message)
+    this.skipped = skipped
+  }
+}
+
+/** Something else wrote into this holder's own epoch prefix: the single-writer invariant is broken. */
+export class CopyConflictError extends TenantStateError {
+  constructor(message: string) {
+    super('GOTRY_TENANT_COPY_CONFLICT', message)
+  }
+}
