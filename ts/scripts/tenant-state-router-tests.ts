@@ -160,6 +160,8 @@ try {
     assert.deepEqual(a.events.map(event => event.type), ['acquired', 'restored'], 'one acquisition served all three callers')
     assert.deepEqual(write(first, 'k', 3), ['k-1', 'k-2', 'k-3'])
     assert.deepEqual(keysOf(first), ['k-1', 'k-2', 'k-3'])
+    first.ledger.close()
+    assert.deepEqual(keysOf(first), ['k-1', 'k-2', 'k-3'], 'a consumer cannot close the ledger the router owns')
   })
 
   await check('T2 a tenant another replica owns is refused with the owner named, and the refusing replica touches no file', async () => {
@@ -373,6 +375,7 @@ try {
     assert.throws(() => handle.run(() => 1), TenantDrainingError)
     await assert.rejects(() => handle.runAsync(async () => 1), TenantDrainingError)
     await assert.rejects(() => handle.handoff(), TenantDrainingError, 'a second handoff does not start while one drains')
+    await assert.rejects(() => a.router.openTenant(ORG, TENANT_A), TenantDrainingError, 'opening a tenant that is being handed off says so, instead of reporting it held by this replica')
     finish()
     assert.equal(await inFlight, 'done')
     await handoff

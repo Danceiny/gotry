@@ -112,14 +112,14 @@ function guardedDatabase(db: Database.Database, assertHeld: Gate): Database.Data
   })
 }
 
-/** The ledger as a handle exposes it. `close` stays callable when the lease is gone, because cleanup must always be possible. */
+/** The ledger as a handle exposes it. The router owns its lifecycle, so `close` does nothing here. */
 function guardedLedger(ledger: StateLedger, assertHeld: Gate): StateLedger {
   return new Proxy(ledger, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target)
       if (property === 'db') return guardedDatabase(value as Database.Database, assertHeld)
       if (typeof value !== 'function') return value
-      if (property === 'close') return (...args: unknown[]) => Reflect.apply(value as Callable, target, args)
+      if (property === 'close') return () => undefined
       return (...args: unknown[]) => {
         assertHeld()
         return Reflect.apply(value as Callable, target, args)
@@ -228,6 +228,10 @@ class OpenTenant implements TenantHandle {
 
   isOpen(): boolean {
     return this.state === 'serving'
+  }
+
+  isDraining(): boolean {
+    return this.state === 'draining'
   }
 
   /** Called once by the router, after the handle is registered. */
@@ -441,6 +445,8 @@ export class TenantRouter {
     }
     const existing = this.handles.get(key)
     if (existing?.isOpen()) return Promise.resolve(existing)
+    // Our own lease is still held while a handoff drains, so an acquisition would only be told it is held by us.
+    if (existing?.isDraining()) return Promise.reject(new TenantDrainingError(key))
     const pending = this.opening.get(key)
     if (pending) return pending
     const attempt = this.open(organization, ledgerTenant, key).finally(() => { this.opening.delete(key) })
