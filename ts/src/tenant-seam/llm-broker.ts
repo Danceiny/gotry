@@ -413,14 +413,14 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
     if (retryAfter !== null && /^\d{1,6}$/u.test(retryAfter)) outHeaders['retry-after'] = retryAfter
     res.writeHead(response.status, outHeaders)
     const ok = response.status >= 200 && response.status < 300
-    const tap = ok ? new UsageTap(contentType) : undefined
+    const tap = new UsageTap(contentType)
     let relayed = 0
     // Measured spend is reported once, and before the child can see that the stream is over: at the `[DONE]` frame, which
     // is where the chat-completions adapter stops reading (it then cancels the request, whatever the upstream still does),
     // or, for a body with no such frame, when the body has ended.
     let metered = false
     const meter = (): void => {
-      if (metered || !tap) return
+      if (metered) return
       metered = true
       const usage = tap.finish()
       const measured = usage ? measuredUsage(usage) : undefined
@@ -442,8 +442,8 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
             res.write(piece)
             continue
           }
-          tap?.push(value)
-          if (tap?.sawDone) meter()
+          tap.push(value)
+          if (tap.sawDone) meter()
           if (!res.write(value)) {
             // A child that went away while the pipe was full never drains it: stop waiting when the connection closes.
             await drainOrClose(res)
@@ -458,7 +458,7 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
       // A stream that had already delivered `[DONE]` was complete; the child may simply have stopped reading and cancelled.
       // Anything else is the upstream failing mid-stream, and the child must see a broken connection, never a truncated
       // stream that looks whole.
-      if (tap?.sawDone) this.forwarded += 1
+      if (tap.sawDone) this.forwarded += 1
       else this.upstreamFailures += 1
       res.destroy()
     }
