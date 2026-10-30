@@ -14,6 +14,56 @@ import {
   type ManagedDshProcessGroupSnapshot,
   type ManagedDshWorkerOutcome,
 } from './managed-dsh-cleanup-diagnostic.ts'
+import { sharedProcessTreeGovernor, type ProcessTreeGovernor, type TreeBreach } from '../tenant-seam/process-governor.ts'
+
+/**
+ * What one worker tree may take (AaaS, docs/rfc/aaas-rfc.md §4.8, threat S-17). Every field is opt-in: a port built
+ * without `limits` behaves exactly as before.
+ */
+export interface ManagedDshResourceLimits {
+  /** V8 old-space ceiling in MiB for the worker and every Node process below it (`NODE_OPTIONS`). An allocation spike dies in-process. */
+  heapMb?: number
+  /** Resident set of the whole worker tree in bytes (sampled; see `ProcessTreeGovernor`). Covers what the heap cap cannot see, such as buffers. */
+  maxRssBytes?: number
+  /** CPU seconds of the whole worker tree (sampled). */
+  maxCpuSeconds?: number
+  /** The longest line, in characters, the worker may write to the parent without a newline. The parent buffers a line until it ends. */
+  maxLineChars?: number
+  /**
+   * How long a worker may take to say who it is (its `worker_started` line) before the missing governor is reported. The
+   * sampler learns which process to watch from that line alone: without it the tree limits are silently off. Default 10 s.
+   */
+  attachDeadlineMs?: number
+  /** Sampler shared by ports. Default: the process-wide governor. */
+  governor?: ProcessTreeGovernor
+}
+
+/**
+ * `memory` and `cpu` come from the tree sampler, `output` from the line cap, `heap` from the worker's own V8 ceiling
+ * (recognised from its stderr tail after it died, where only the ceiling is known and `observed` repeats it).
+ */
+export type ManagedDshResourceBreach = TreeBreach | { readonly kind: 'output' | 'heap'; readonly limit: number; readonly observed: number }
+
+/** The worker tree went over a resource limit and was killed. Closed shape: kind and numbers only, never worker output. */
+export class ManagedDshResourceLimitError extends Error {
+  readonly breach: ManagedDshResourceBreach
+
+  constructor(breach: ManagedDshResourceBreach) {
+    super(`managed DSH worker exceeded its ${breach.kind} limit`)
+    this.name = 'ManagedDshResourceLimitError'
+    this.breach = breach
+  }
+}
+
+function assertPositiveLimit(name: string, value: number | undefined): void {
+  if (value !== undefined && (!Number.isFinite(value) || value <= 0)) throw new RangeError(`managed DSH limit ${name} must be a positive number`)
+}
+
+function limitedEnvironment(env: NodeJS.ProcessEnv | undefined, heapMb: number | undefined): NodeJS.ProcessEnv | undefined {
+  if (heapMb === undefined) return env
+  const existing = (env?.NODE_OPTIONS ?? '').split(/\s+/).filter((option) => option !== '' && !option.startsWith('--max-old-space-size='))
+  return { ...env, NODE_OPTIONS: [...existing, `--max-old-space-size=${Math.floor(heapMb)}`].join(' ') }
+}
 
 export interface ManagedDshRunPortOptions {
   cwd?: string
@@ -21,6 +71,8 @@ export interface ManagedDshRunPortOptions {
   graceMs?: number
   cleanupRole?: 'task' | 'warmer'
   env?: NodeJS.ProcessEnv
+  /** Resource ceilings for the worker tree. Absent: none, as before. */
+  limits?: ManagedDshResourceLimits
   /** Test seam overriding the failure-path group snapshot; production uses the safe ps snapshot. */
   groupObserver?: typeof snapshotManagedDshGroup
   /**
@@ -38,14 +90,17 @@ const WORKER_FAILURE_CODES = new Set(['HARNESS_BOOT_TIMEOUT', 'HARNESS_START_FAI
 
 const requireFromModule = createRequire(import.meta.url)
 
-function workerLaunch(path: string): readonly string[] {
+function workerLaunch(path: string, heapMb?: number): readonly string[] {
+  // The V8 ceiling is given on the worker's own command line as well as in NODE_OPTIONS (which carries it to the
+  // processes below the worker), so the worker's ceiling does not depend on its environment surviving a scrub.
+  const heap = heapMb === undefined ? [] : [`--max-old-space-size=${Math.floor(heapMb)}`]
   // The worker cwd is the isolated booking state root, so a bare `tsx/esm`
   // loader would resolve from the wrong dependency tree and exit before the
   // first request. Resolve the loader from this package once and pass its
   // absolute installed path to Node.
   return path.endsWith('.ts')
-    ? [process.execPath, '--import', requireFromModule.resolve('tsx/esm'), path]
-    : [process.execPath, path]
+    ? [process.execPath, ...heap, '--import', requireFromModule.resolve('tsx/esm'), path]
+    : [process.execPath, ...heap, path]
 }
 
 /** Run DeepSeekHarness in a child tree owned by dsh-subprocess-local. */
@@ -66,7 +121,13 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   constructor(options: ManagedDshRunPortOptions = {}) {
     const defaultWorker = join(dirname(fileURLToPath(import.meta.url)), 'dsh-worker.js')
     const workerPath = options.workerPath ?? (existsSync(defaultWorker) ? defaultWorker : defaultWorker.replace(/\.js$/, '.ts'))
-    const { workerPath: _worker, graceMs = 500, cleanupRole, env, groupObserver, bootLog, ...harnessOptions } = options
+    const { workerPath: _worker, graceMs = 500, cleanupRole, env, groupObserver, bootLog, limits, ...harnessOptions } = options
+    assertPositiveLimit('heapMb', limits?.heapMb)
+    assertPositiveLimit('maxRssBytes', limits?.maxRssBytes)
+    assertPositiveLimit('maxCpuSeconds', limits?.maxCpuSeconds)
+    assertPositiveLimit('maxLineChars', limits?.maxLineChars)
+    assertPositiveLimit('attachDeadlineMs', limits?.attachDeadlineMs)
+    this.limits = limits
     this.cleanupRole = cleanupRole ?? 'unspecified'
     this.graceMs = graceMs
     this.groupObserver = groupObserver ?? snapshotManagedDshGroup
@@ -74,22 +135,32 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     this.constructedAtMs = Date.now()
     this.runtime = new LocalSubprocessRuntime(new Context())
     this.handle = this.runtime.spawn({
-      argv: workerLaunch(workerPath),
+      argv: workerLaunch(workerPath, limits?.heapMb),
       cwd: options.cwd ?? process.cwd(),
       // Provider diagnostics may contain request fragments. Keep a bounded
       // private tail for ownership without inheriting it into service logs.
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: { maxBytes: 64 * 1024 } },
       graceMs,
-      env,
+      env: limitedEnvironment(env, limits?.heapMb),
     })
     this.handle.stdout!.setEncoding('utf8')
     this.handle.stdout!.on('data', (chunk: string) => this.consume(chunk))
+    if (limits && (limits.maxRssBytes !== undefined || limits.maxCpuSeconds !== undefined)) {
+      const deadlineMs = limits.attachDeadlineMs ?? 10_000
+      this.attachTimer = setTimeout(() => {
+        this.emitBootLog(`RESOURCE_GOVERNOR_UNATTACHED ${JSON.stringify({ role: this.cleanupRole, afterMs: deadlineMs })}`)
+      }, deadlineMs)
+      this.attachTimer.unref()
+    }
     this.handle.done.then(
       (outcome) => {
+        this.stopWatching()
         this.workerOutcome = { state: 'exited', exitCode: outcome.exitCode, signal: outcome.signal }
+        this.noteHeapExhaustion()
         this.markTerminal('managed DSH worker exited')
       },
       () => {
+        this.stopWatching()
         this.workerOutcome = { state: 'failed' }
         this.markTerminal('managed DSH worker failed')
       },
@@ -100,6 +171,9 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     this.cleanupDeadlineMs = Math.max(1_000, graceMs * 4)
   }
 
+  private readonly limits: ManagedDshResourceLimits | undefined
+  private attachTimer: NodeJS.Timeout | undefined
+  private unwatchTree: (() => void) | undefined
   private readonly harnessOptions: Record<string, unknown>
   private readonly cleanupDeadlineMs: number
   private readonly groupObserver: typeof snapshotManagedDshGroup
@@ -130,17 +204,76 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     return this.booted
   }
 
+  /**
+   * A resource ceiling was crossed: say why before anything else can say something vaguer, fail what is waiting with
+   * that reason, and let the provider-owned range cleanup run. The governor (or the line cap) then kills the tree.
+   */
+  private resourceBreach(breach: ManagedDshResourceBreach): void {
+    this.terminalError ??= new ManagedDshResourceLimitError(breach)
+    this.failPending(this.terminalError)
+    this.stopWatching()
+    this.inputBuffer = ''
+    try { this.handle.terminate() } catch { /* the governor's kill below is what must happen */ }
+  }
+
+  private stopWatching(): void {
+    clearTimeout(this.attachTimer)
+    this.attachTimer = undefined
+    const unwatch = this.unwatchTree
+    this.unwatchTree = undefined
+    unwatch?.()
+  }
+
+  /**
+   * A worker that died of its own V8 ceiling is a resource-limit death, not a mystery crash. Only the fixed V8 message is
+   * looked for in the bounded stderr tail; nothing from it is kept or reported.
+   */
+  private noteHeapExhaustion(): void {
+    const heapMb = this.limits?.heapMb
+    if (heapMb === undefined || this.terminalError) return
+    let tail = ''
+    try { tail = this.handle.collected.stderr?.readFrom(0).text ?? '' } catch { return }
+    if (!tail.includes('JavaScript heap out of memory')) return
+    const bytes = Math.floor(heapMb) * 1024 * 1024
+    this.terminalError = new ManagedDshResourceLimitError({ kind: 'heap', limit: bytes, observed: bytes })
+  }
+
+  private watchTree(workerPid: number): void {
+    const limits = this.limits
+    if (!limits || (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined)) return
+    clearTimeout(this.attachTimer)
+    this.attachTimer = undefined
+    const governor = limits.governor ?? sharedProcessTreeGovernor()
+    // The worker is this process's own child (the lifecycle line was checked for that), so the governor also requires
+    // the parent to match: a pid the operating system reused for something else is never sampled or killed.
+    this.unwatchTree = governor.watch(
+      { rootPid: workerPid, parentPid: process.pid },
+      { maxRssBytes: limits.maxRssBytes, maxCpuSeconds: limits.maxCpuSeconds },
+      (breach) => this.resourceBreach(breach),
+    )
+  }
+
   private consume(chunk: string): void {
+    if (this.terminalError instanceof ManagedDshResourceLimitError) return
     this.inputBuffer += chunk
     for (;;) {
       const newline = this.inputBuffer.indexOf('\n')
-      if (newline < 0) return
+      if (newline < 0) {
+        // The parent holds a line until it ends; a worker that never ends one would grow this process without bound.
+        const maxLineChars = this.limits?.maxLineChars
+        if (maxLineChars !== undefined && this.inputBuffer.length > maxLineChars) {
+          this.resourceBreach({ kind: 'output', limit: maxLineChars, observed: this.inputBuffer.length })
+          // The worker stays up until the provider range cleanup lands; this port no longer reads from it.
+        }
+        return
+      }
       const line = this.inputBuffer.slice(0, newline); this.inputBuffer = this.inputBuffer.slice(newline + 1)
       try {
         const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string; lifecycle?: string; workerPid?: number; parentPid?: number; boot?: DshBootObservation }
         if (message.lifecycle === 'worker_started') {
           if (this.workerPid === null && Number.isSafeInteger(message.workerPid) && message.workerPid! > 0 && message.parentPid === process.pid) {
             this.workerPid = message.workerPid!
+            this.watchTree(this.workerPid)
             // One bounded read-only start-time anchor, captured while the worker
             // is alive, so a later failure snapshot can disprove PID reuse.
             void readManagedDshWorkerStart(this.workerPid).then((startedAt) => {
@@ -225,6 +358,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     if (this.closePromise) return this.closePromise
     this.closePromise = (async () => {
       const started = performance.now()
+      this.stopWatching()
       this.failPending(new Error('managed DSH run port closed'))
       this.handle.terminate()
       // Observe worker failure even if range observation rejects or times out

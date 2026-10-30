@@ -16,7 +16,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { MeasuredLlmUsage } from '../llm-price-table.ts'
 import { assertSeamTenant, deriveSeamTenant, InvalidPrincipalError, SeamError, seamTenantKey, UnknownOrganizationError, type AuthenticatedCaller, type CallerAuthenticator, type CallerRequest, type OrganizationKeyring, type SeamTenant } from '../tenant-seam/seam.ts'
 import { QuotaExceededError, type TenantQuotas } from '../tenant-seam/quotas.ts'
-import { InvalidTenantIdError, RouterClosedError, TenantDrainingError, TenantStateError } from '../tenant-state/errors.ts'
+import { InvalidTenantIdError, ReplicaAtCapacityError, RouterClosedError, TenantDrainingError, TenantStateError } from '../tenant-state/errors.ts'
+import { derivePromptCachePartition } from '../tenant-state/ids.ts'
 import type { TenantHandle, TenantRouter } from '../tenant-state/tenant-router.ts'
 import type { BookingCopilotIngressMode, BookingIngressBinding, BookingIngressPrincipal } from './contracts.ts'
 import { BookingCopilotTaskRuntime, type BookingCopilotRuntimeOptions, type BookingPlannerSession, type BookingPlannerSessionFactory } from './runtime.ts'
@@ -25,6 +26,11 @@ import { BookingCopilotTaskRuntime, type BookingCopilotRuntimeOptions, type Book
 export interface TenantPlannerContext {
   /** The tenant's own directory. Planner working files and session state go here, never beside another tenant's. */
   readonly tenantRoot: string
+  /**
+   * The tenant's prompt cache partition label (`derivePromptCachePartition`). A planner puts it into every prompt ahead
+   * of anything tenant-derived, so a provider's prefix cache is never shared between tenants past the shared instructions.
+   */
+  readonly cachePartition: string
   /**
    * Reports the measured usage of the planner invocation in progress, priced against the frozen table. A report from
    * outside an invocation of this tenant is dropped, never charged to anyone else.
@@ -171,8 +177,11 @@ export class BookingTenancy {
     let planner = this.planners.get(key)
     if (!planner) {
       const { quotas, planners, router } = this.options
+      const organizationKey = this.options.keyring.keyFor(seam.organization)
+      if (organizationKey === null) throw new UnknownOrganizationError()
       planner = planners.forTenant({
         tenantRoot: router.tenantRootOf(seam.organization, seam.ledgerTenant),
+        cachePartition: derivePromptCachePartition(organizationKey, seam.ledgerTenant),
         reportUsage: (model, usage) => {
           const meter = invocations.getStore()
           if (!meter || meter.tenantKey !== key) return
@@ -226,6 +235,8 @@ export function tenantRejection(error: unknown): TenantRejection {
   if (error instanceof UnknownOrganizationError) return { status: 403, body: { error: { code: 'organization_not_served' } } }
   if (error instanceof RouterClosedError) return { status: 503, body: { error: { code: 'booking_copilot_shutting_down' } } }
   if (error instanceof TenantDrainingError) return { status: 503, body: { error: { code: 'tenant_draining' } }, retryAfterSeconds: 1 }
+  // A full replica frees a slot only when some tenant is handed off, so retrying it soon is not a useful hint; the request belongs on another replica.
+  if (error instanceof ReplicaAtCapacityError) return { status: 503, body: { error: { code: 'tenant_unavailable' } } }
   if (error instanceof TenantStateError && !(error instanceof SeamError)) return { status: 503, body: { error: { code: 'tenant_unavailable' } }, retryAfterSeconds: 1 }
   return { status: 500, body: { error: { code: 'tenant_seam_failure' } } }
 }

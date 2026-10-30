@@ -1,0 +1,83 @@
+{
+  "suite": "scripts/tenant-executor-binding-tests.ts",
+  "timeoutMs": 120000,
+  "mutations": [
+    {
+      "id": "X1",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "any organization may use the host browser",
+      "find": "if (!options.observe && organization !== hostBrowserOrganization) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "X2",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "an observer is told the organization the body names",
+      "find": "const observation: BookingObserveRequest = { supplier, entryUrl, organization }",
+      "replace": "const observation: BookingObserveRequest = { supplier, entryUrl, organization: (parsed as { organization?: string }).organization ?? organization }"
+    },
+    {
+      "id": "X3",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "a malformed organization from the host is accepted",
+      "find": "if (resolved === null || !isBridgeOrganization(resolved)) {",
+      "replace": "if (resolved === null) {"
+    },
+    {
+      "id": "X4",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "an authenticator that throws is treated as the default organization",
+      "find": "    } catch {\n      resolved = null\n    }",
+      "replace": "    } catch {\n      resolved = BRIDGE_DEFAULT_ORGANIZATION\n    }"
+    },
+    {
+      "id": "X5",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "the host is asked who the caller is before the bearer is checked",
+      "find": "          if (!authorized(req, res)) return\n          const organization = resolveOrganization(req, res)\n          if (organization === null) return",
+      "replace": "          const organization = resolveOrganization(req, res)\n          if (!authorized(req, res)) return\n          if (organization === null) return"
+    },
+    {
+      "id": "X6",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "a multi-organization deployment need not say whose browser this is",
+      "find": "if (options.callerOrganization && !options.observe && options.hostBrowserOrganization === undefined) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "X7",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "a malformed host browser organization is accepted",
+      "find": "if (options.hostBrowserOrganization !== undefined && !isBridgeOrganization(options.hostBrowserOrganization)) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "X8",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "the default owner of the host browser is not local",
+      "find": "const hostBrowserOrganization = options.hostBrowserOrganization ?? BRIDGE_DEFAULT_ORGANIZATION",
+      "replace": "const hostBrowserOrganization = options.hostBrowserOrganization ?? 'acme'"
+    },
+    {
+      "id": "X9",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "an injected observer is gated by the host browser's organization",
+      "find": "if (!options.observe && organization !== hostBrowserOrganization) {",
+      "replace": "if (organization !== hostBrowserOrganization) {"
+    },
+    {
+      "id": "X11",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "the single-organization form changes the request an observer receives",
+      "find": "options.callerOrganization ? { supplier, entryUrl, organization } : { supplier, entryUrl }",
+      "replace": "{ supplier, entryUrl, organization }"
+    },
+    {
+      "id": "X10",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "observers are not told the caller's organization",
+      "find": "const observation: BookingObserveRequest = { supplier, entryUrl, organization }",
+      "replace": "const observation: BookingObserveRequest = { supplier, entryUrl }"
+    }
+  ]
+}

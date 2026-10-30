@@ -99,3 +99,14 @@ export class RouterClosedError extends TenantStateError {
     super('GOTRY_TENANT_ROUTER_CLOSED', 'the tenant router is closed')
   }
 }
+
+/**
+ * This replica already holds as many tenants as it was configured to. Each open tenant costs file descriptors (about
+ * three) and memory; past the process's descriptor limit every tenant, and every socket, would start failing at once.
+ * The request is refused before the lease or any file is touched and belongs on another replica or later.
+ */
+export class ReplicaAtCapacityError extends TenantStateError {
+  constructor(readonly limit: number) {
+    super('GOTRY_TENANT_REPLICA_AT_CAPACITY', 'this replica is serving as many tenants as it is configured to')
+  }
+}
