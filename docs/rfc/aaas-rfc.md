@@ -90,7 +90,7 @@ The goal: many users, each under their own identity, call one cloud GoTry servic
 1. **The semantics already exist.** One file is one writer domain today. The drills prove N-process safety on it, and the contention fixes are in the kernel.
 2. **Consume-once needs a linearizable writer.** ADR-23 approvals, request bindings and the WriteGate claim each allow exactly one winner. One writer per tenant gives that directly; a multi-writer store gives it through transactions; a CRDT cannot.
 3. **ADR-16 already named this binding.** Its Web binding is "the same schema on a per-user SQLite file (or Postgres, isomorphic schema)".
-4. **Blast radius and cost stay per tenant.** A corrupt file, a hot tenant or an unindexed scan affects one tenant only.
+4. **State blast radius and cost stay per tenant.** A corrupt file, a hot tenant or an unindexed scan affects one tenant's state only. Compute is not partitioned: the tenants of a replica share its CPU, memory and file descriptors, and §4.8 says what bounds that.
 5. **The kernel stays frozen.** Routing, leases and replication live outside the five kernel-pinned files, except for a possible epoch guard (§9).
 
 ### 3.4 Switch triggers to the fallback (option P)
@@ -98,7 +98,7 @@ The goal: many users, each under their own identity, call one cloud GoTry servic
 1. A product needs transactions or consistent reads across tenants.
 2. A data class needs RPO = 0 before the path in §4.3 can be proven.
 3. A3 drills show ownership churn or routing instability beyond the agreed budget.
-4. Tenant count times per-file overhead exceeds the replica budget.
+4. Tenant count times per-file overhead exceeds the replica budget. The measured per-tenant cost (about three file descriptors and a quarter of a MiB when idle, in the [capacity baseline](../ops/aaas-capacity-baseline.md)) is what this compares against.
 
 ## 4. Proposal
 
@@ -197,6 +197,25 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 - **Booking Copilot history.** Tasks are short-lived. Proposal: no migration. New tasks go to tenant ledgers; node ledgers stay read-only for audit and are archived later (Q7).
 - **No inference.** Events already recorded under `local` are never re-attributed by guesswork (ADR-16). Any move uses the authorized repair procedure of [#254](https://github.com/Danceiny/gotry/issues/254).
 
+### 4.8 Execution isolation: compute, credentials, cache, browser (A2)
+
+The state layer isolates what a tenant stores. This section covers what a tenant's turn runs on and with. In AaaS v1 that is narrow, and the design says so first.
+
+- **What a v1 planner can do.** The embedded planner is typed planning only: the dsh shell, file, sandbox, subprocess and pty plugins are disabled, `toolBash` is off, and the only tools are the thirteen `booking_*` capabilities, each of which yields one validated decision. Assistant text is ignored. No model-generated code or command runs on the server, so a per-task microVM or gVisor sandbox would isolate nothing the planner can reach. Supplier login state is not on the server at all (S-9): "credentials stay out of the sandbox" reduces to "the credentials are not in the cloud".
+- **What the tenants of a replica still share.** CPU, memory, file descriptors, the planner's LLM credential, the provider's prompt cache, and the executor's host browser. The state layer isolates none of them. Each has a control with a falsification test:
+
+| Shared resource | Threat | Control | Evidence |
+|---|---|---|---|
+| CPU and memory of a replica | S-17 | Every planner process tree runs under ceilings: a V8 heap cap, a sampled tree RSS and CPU cap, and a cap on a worker's unterminated line. A tree over a ceiling is killed and its turn ends as a non-retryable `PLANNER_FAILED`, never rerun on a fresh port | run-all §96 |
+| File descriptors of a replica | S-17 | `maxOpenTenants`: a tenant over the cap is refused before its lease or any file exists (a typed 503 with no retry hint). An open tenant holds about three descriptors; a slot is freed only by a handoff or by closing the router | run-all §96, [capacity baseline](../ops/aaas-capacity-baseline.md) |
+| The LLM credential | S-18 | A loopback broker holds the upstream key and base URL; each planner process tree gets a short-lived ticket that works only against the broker, for a bounded number of requests, and dies with its port. The broker also measures usage, so spend is charged to the tenant whose invocation asked instead of the configured worst case | run-all §97 |
+| The provider's prompt cache | S-16 | A per-tenant HMAC label sits after the instructions every tenant shares and before any tenant-derived byte, so two tenants can share a cached prefix only up to it | run-all §98 |
+| The executor's host browser | S-19 | The module knows whose supplier login the host browser holds and serves only that organization; a caller's organization is resolved by the host, never read from the request | run-all §99 |
+| Capacity | trigger 4 | A probe measures tenants held open, takeover latency and a booted planner with the real code | run-all §100, [capacity baseline](../ops/aaas-capacity-baseline.md) |
+
+- **Limits, stated plainly.** (a) The tree sampler reads `ps` once a second, so a runaway can overshoot between samples; the V8 heap cap is the first line for JavaScript allocations. RSS counts pages shared between processes once per process, and CPU time has one-second resolution on Linux. The heap ceiling also reaches the dsh runtime below the worker (`NODE_OPTIONS`), which holds most of a turn's memory. A worker that dies of its own ceiling is recognised from its stderr tail; when the runtime is what dies, the worker reports an ordinary failed run, and the caller gets the same non-retryable `PLANNER_FAILED`, only without the `resource_limit` metric. A single-threaded spinner is normally ended first by the turn's own deadline, as a retryable timeout; the CPU ceiling is for bursts across threads and processes. Where the process table cannot be read, or does not show the service itself, the real tenant planner refuses to start a child instead of running it ungoverned. (b) The default ceilings are unreviewed and were set from one machine's idle footprint; a deployment passes its own after probing real nodes. (c) Planner children still share the replica's OS user and network: there is no uid separation, no cgroup and no egress policy, so a child can reach any host it could before, and it still inherits the rest of the parent's environment minus the names the runtime's scrub treats as secret. Host- and network-level controls are ops redundancy, which the decision of 2026-10-26 leaves for later. (d) The broker narrows what a compromised *child* gets. Anyone who can run code in the gotry process can still read the key. It carries the chat-completions route (`DEEPSEEK_PROVIDER=gateway-chat`) only, and a planner configured with a broker on another route fails at construction. (e) The cache label assumes the provider caches by prompt prefix, and it changes nothing about what the operator's own bill shows. (f) The binding stops a second organization from using the host browser. It does not make that browser safe to share, and nothing here is a multi-tenant cloud browser. (g) A replica frees an open-tenant slot only when a tenant is handed off or the router closes; there is no idle eviction. Until A3 composes idle release with tenant affinity, one organization with many users can fill the slots and every other new tenant is refused by that replica; without the cap the same event would exhaust descriptors for all of them at once.
+- **Entry criteria for what is not built.** The hosted conversational agent (Q6) and a multi-tenant cloud executor browser run model-steered code or a browser on the server, which is exactly what the controls above do not cover. Neither starts before: (1) its own ADR and a founder decision; (2) one disposable sandbox per task, with a boundary stronger than a shared kernel (a microVM or a gVisor-class runtime), no persistent profile, destroyed when the task ends; (3) deny-by-default egress through a credential-injecting proxy, of which the broker is the first, loopback form; (4) resource accounting enforced by the sandbox, not sampled from outside; (5) the capacity baseline measured again with the sandbox in place; and (6) for a browser, a founder decision on how a tenant's supplier login would reach it at all, since cookie values may not cross the bridge or live on the server (S-9, 2026-09-11): that is a decision about a red line before it is an ADR.
+
 ## 5. ADR re-review (kickoff)
 
 | ADR | Trigger | Finding | Proposed addition on acceptance |
@@ -221,6 +240,10 @@ The draft lives in [AaaS security design](../design/aaas-security-design.md). Th
 - bearer keys exposed once the service leaves loopback;
 - cost, turn and bridge exhaustion by one tenant;
 - deleted data surviving in off-node copies.
+- a runaway planner child taking a replica's CPU, memory or file descriptors from every tenant on it;
+- the planner's LLM credential reachable from a process that model output steers;
+- a provider's prompt cache letting one tenant infer another's content;
+- a second organization riding the executor's host browser and its supplier login.
 
 ## 7. Rollout plan (every phase can stop)
 
@@ -228,7 +251,7 @@ The draft lives in [AaaS security design](../design/aaas-security-design.md). Th
 |---|---|---|---|
 | A0 design | This RFC, the ADR re-review, the threat model, document reconciliation, facts F-1–F-4 | The founder accepts the RFC (Q1–Q7 answered) | D-15 records the met trigger; nothing changes at runtime |
 | A1 state layer | Tenant router and leases outside the kernel; epoch-scoped copies; restore and verification; offline concurrency and fault-injection suites on isolated state roots | Suites green; every #275 checklist bullet mapped to a passing test or a recorded decision | Not deployed; per-node islands unchanged |
-| A2 identity and quotas | Seam-derived tenants, organization keys, quotas and metering | Adversarial suite: every cross-tenant read and write rejected (run-all §93 quotas and metering, §94 seam and surface, §95 bridge organization) | Single-organization deployment only |
+| A2 identity and quotas | Seam-derived tenants, organization keys, quotas and metering | Adversarial suite: every cross-tenant read and write rejected (run-all §93 quotas and metering, §94 seam and surface, §95 bridge organization); execution isolation and capacity (§96 compute, §97 credentials, §98 cache partition, §99 executor binding, §100 capacity probe) | Single-organization deployment only |
 | A3 deployment | Intranet tier with N replicas, the boundary ADR, observability | UAT multi-replica run plus failure drills: owner kill, partition, lease store down, object store down, restore | Roll back to per-node loopback |
 | A4 production | The first real second user: hotelbyte employees | Production multi-user evidence; D-15 moves to the debt archive | Stay at A3 on UAT |
 
@@ -274,6 +297,9 @@ Simulated drills, fixtures and offline suites never count as A3 or A4 evidence.
 | Vocabulary collision with hotelbyte's "tenant" | The §4.1 table; code names `ledgerTenant` and `organization` |
 | Cost exhaustion by one tenant | Per-tenant and per-organization budgets before A4 |
 | Hidden coupling to hotel-be routing | F-1 before the A1 design freeze |
+| A runaway planner child takes a replica's CPU, memory or file descriptors from every tenant on it | Process-tree ceilings with a typed non-retryable failure; `maxOpenTenants`; a runaway-child drill in A3; ceilings re-set from probes of the real nodes |
+| The planner's LLM credential is read from a process that model output steers | The loopback credential broker; the real planner of the tenant form cannot be built without one. A compromised gotry process still reads the key |
+| One tenant infers another's content from the provider's prompt cache | The per-tenant cache label; whether the provider isolates caches itself is an open question |
 
 ## 9. Reconciliation with repository discipline
 
