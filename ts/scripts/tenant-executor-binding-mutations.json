@@ -13,8 +13,8 @@
       "id": "X2",
       "file": "src/backend/modules/booking-executor.ts",
       "note": "an observer is told the organization the body names",
-      "find": "const observation: BookingObserveRequest = { supplier, entryUrl, organization }",
-      "replace": "const observation: BookingObserveRequest = { supplier, entryUrl, organization: (parsed as { organization?: string }).organization ?? organization }"
+      "find": "options.callerOrganization ? { supplier, entryUrl, organization } : { supplier, entryUrl }",
+      "replace": "options.callerOrganization ? { supplier, entryUrl, organization: (parsed as { organization?: string }).organization ?? organization } : { supplier, entryUrl }"
     },
     {
       "id": "X3",
@@ -76,8 +76,8 @@
       "id": "X10",
       "file": "src/backend/modules/booking-executor.ts",
       "note": "observers are not told the caller's organization",
-      "find": "const observation: BookingObserveRequest = { supplier, entryUrl, organization }",
-      "replace": "const observation: BookingObserveRequest = { supplier, entryUrl }"
+      "find": "options.callerOrganization ? { supplier, entryUrl, organization } : { supplier, entryUrl }",
+      "replace": "{ supplier, entryUrl }"
     }
   ]
 }
