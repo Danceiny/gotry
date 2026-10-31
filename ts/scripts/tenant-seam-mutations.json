@@ -102,10 +102,10 @@
     },
     {
       "id": "S15",
-      "file": "src/booking-surface/server.ts",
-      "note": "a lease lost mid-stream is told to the client as an ordinary error (F3)",
-      "find": "    if (scope.isTenantFault(error)) { res.destroy(); return }\n",
-      "replace": ""
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "a lease lost mid-stream is no longer recognised as a tenant fault, so it is told to the client as an ordinary error (F3, F11)",
+      "find": "        isTenantFault: (error) => error instanceof TenantStateError,\n",
+      "replace": "        isTenantFault: () => false,\n"
     },
     {
       "id": "S16",
@@ -153,8 +153,8 @@
       "id": "S22",
       "file": "src/booking-surface/startup.ts",
       "note": "the tenant planner is rooted in the shared root (H5)",
-      "find": "      const handle = await createPlanner({ ...base, stateRoot: context.tenantRoot })",
-      "replace": "      const handle = await createPlanner({ ...base })"
+      "find": "        stateRoot: context.tenantRoot,\n",
+      "replace": ""
     },
     {
       "id": "S23",
