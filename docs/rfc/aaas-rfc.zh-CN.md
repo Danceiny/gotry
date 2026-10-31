@@ -3,7 +3,7 @@
 # RFC：GoTry 多用户 Agent 服务化（AaaS）——状态、身份与部署
 
 > 定位：把 GoTry 做成多用户共用的单一云端服务的 A0 设计提案——状态层、租户模型、持久性、身份、部署拓扑，以及由此触发的 ADR 复审。
-> 状态：**proposal**（[#674](https://github.com/Danceiny/gotry/issues/674) 的 A0，2026-10-26 起草）。本文任何内容都尚未采纳；在 founder 接受本 RFC 之前，每条 ADR 保持现有文本。
+> 状态：**accepted**（[#674](https://github.com/Danceiny/gotry/issues/674) 的 A0，2026-10-26 起草，2026-10-28 接受）。founder 合并了 [#675](https://github.com/Danceiny/gotry/pull/675) 中的提案并指示开工；未给出任何逐项改动，因此 Q1–Q7 按建议成立（§8.1）；任何改动只重新打开它点名的问题。
 > 上游：founder 2026-10-21 的决定（#674）；[architecture](../architecture.zh-CN.md) §8（ADR-14/15/16/17/23）与 §10（D-15）；[总纲](../gotry-master-outline.zh-CN.md) §2 复用矩阵；[事务化状态 RFC](transactional-state-rfc.zh-CN.md) TS-5；[LoopX 映射 RFC](loopx-inspired-upgrades-rfc.zh-CN.md) §6.5。
 > 下游：#674 的 A1–A4 工作项；ADR 复审结论，接受后吸收进 architecture §8 与 [ADR 展开](../adr-expansions.zh-CN.md)；[AaaS 安全设计](../design/aaas-security-design.zh-CN.md)。
 > 部署事实：hotel-be `docs/architecture/gotry-backend-deployment-architecture.md`，最近核实于 2026-10-24。约束编号 C1–C16 均指该文档。
@@ -16,7 +16,7 @@
 - **持久性。** 明确声明 RPO，而不是暗示「不丢」。写路径封存期间，可接受异步的异地流式复制（RPO 为秒级）。在 AaaS 上启封 M5 之前，WriteGate outbox 必须先做到 RPO = 0。
 - **拓扑。** 在 BFF 之后部署专用的内网 gotry 层：N 个副本，按租户亲和路由。由一条新的边界 ADR 为该层取代 C2。浏览器可达面保持为零（C16）。
 - **ADR 复审。** ADR-14、ADR-15、ADR-17 与 ADR-23 成立，并补上 §5 的增量。ADR-16 保持冻结，其后置的同步与 claim 事项就此激活。
-- **决策请求。** 请回答 §8.1 的 Q1–Q7。接受之后才开工 A1。事实项 F-1–F-4 以只读方式并行查明。
+- **决策。** §8.1 的 Q1–Q7 已于 2026-10-28 按建议接受，A1 已开工。事实项 F-1–F-4 以只读方式并行查明。
 
 ## 1. 问题
 
@@ -245,7 +245,7 @@ C2 是 hotel-be 的部署约束，不是 ADR。A3 边界 ADR 为 gotry 层取代
 
 ### 8.1 founder 决策
 
-| # | 问题 | 建议 |
+| # | 问题 | 决策（2026-10-28 按建议接受） |
 |---|---|---|
 | Q1 | 是否把「按租户 keyed 单写者」作为 ADR-15 重新表述后的边界？ | 是 |
 | Q2 | 账本 owner 是否为人，principal scope 作为属性？ | 是 |
@@ -281,7 +281,7 @@ C2 是 hotel-be 的部署约束，不是 ADR。A3 边界 ADR 为 gotry 层取代
 - **状态纪律。** A1 的全部测试跑在隔离 state root 上，绝不碰 founder 的运行时状态。
 - **写路径。** WriteGate 行为不变。预订写入保持封存。
 - **语言与 harness。** 不引入 Python；dsh 跟 main，不做修改。
-- **同提交规则。** 接受后，所属权威面在同一提交中更新：architecture §8 与 §10、ADR 展开、roadmap 与总纲。
+- **同提交规则。** 接受时，所属权威面已在同一提交中更新：architecture §8、ADR 展开、roadmap、总纲与决策队列。architecture §10（D-15）早已记下触发条件，保持不变。
 
 ## 附录 A. 来源
 

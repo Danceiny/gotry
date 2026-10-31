@@ -22,7 +22,7 @@
 |---|---|---|
 | 已发布包 | npm `latest` 指向 `0.2.0-rc.32`；兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。源码 `main` 可能领先两者。 | [`release-notes.zh-CN.md`](release-notes.zh-CN.md) 与 [CHANGELOG](../CHANGELOG.md) |
 | 产品里程碑 | M3 证据仍开放。Web 产品与确定性 scorer 已存在；真实 50–200 人种子用户结果集尚未满足退出门。 | [#22](https://github.com/Danceiny/gotry/issues/22) |
-| AaaS 服务线 | 2026-10-21 立项为并行工程线：一个云端 GoTry 服务供多用户共用。A0 设计（RFC、ADR 复审、威胁模型）待 founder 评审。它不替代 M3 证据，也不启封 M5 写入。 | [#674](https://github.com/Danceiny/gotry/issues/674)、[`rfc/aaas-rfc.zh-CN.md`](rfc/aaas-rfc.zh-CN.md) |
+| AaaS 服务线 | 2026-10-21 立项为并行工程线：一个云端 GoTry 服务供多用户共用。A0 设计（RFC、ADR 复审、威胁模型）已于 2026-10-28 接受，A1（按租户的状态层）进行中。它不替代 M3 证据，也不启封 M5 写入。 | [#674](https://github.com/Danceiny/gotry/issues/674)、[`rfc/aaas-rfc.zh-CN.md`](rfc/aaas-rfc.zh-CN.md) |
 | 评测 | 确定性契约与校验器已存在。未取得准入且完整的 cohort 前，不声明 official score 或 uplift。 | [`evaluation/evaluation-foundation.zh-CN.md`](evaluation/evaluation-foundation.zh-CN.md) |
 | 记忆 | M4 collector 与 scorer 只属于工程支持；仍需带 source review 的真实 `observed_private` 回访 cohort。 | [`architecture.zh-CN.md` §10 D-19](architecture.zh-CN.md#101-未清偿工作面)、[#20](https://github.com/Danceiny/gotry/issues/20)（已按「推迟」关闭） |
 | Booking Copilot | GoTry 可为既有预订工作台规划 typed 只读动作；`Book` 仍由 Checkout 独占。真实库存、恢复、Checkout 与订单状态证据仍开放。 | [`architecture.zh-CN.md` §10 D-29](architecture.zh-CN.md#101-未清偿工作面)、[#142](https://github.com/Danceiny/gotry/issues/142)（已按「推迟」关闭） |

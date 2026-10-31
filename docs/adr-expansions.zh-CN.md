@@ -16,6 +16,7 @@
 - **归因纪律**：attribution 只能在 confirm-outcome 由用户明说落盘，**模型不许自评「有用」**。
 - wish 稳定 `wish_id` + muted（休眠不删除）；召回 0..1/轮（`gotry_wish_pool_list` 条件评分，muted 永不召回，无命中不硬推）——M4 北极星「下一次出发率」的度量底座。
 - 备选与取舍：召回即记「有用」——自称用了 ≠ 让结果变好；wish 删除制——憧憬不该被拒绝。
+- **AaaS 复审（2026-10-28，#674）：按租户成立。** 归因仍需租户本人确认；不做跨租户的效用聚合；出现第二个消费方时仍重新打开本 ADR。
 
 #### 8.15 事务化状态基座
 单文件 SQLite 账本（better-sqlite3，WAL）= 唯一权威，业界 durable-execution 五件套收敛：
@@ -29,17 +30,22 @@
 
 备选与取舍：Postgres/DBOS/Temporal/Restate 平台——单用户本地产品不需要服务端（SQLite durable 学派「一文件即控制面」）；纯文件加固 tmp+rename——修不了跨文件分叉与并发；`node:sqlite`——零依赖但较新，D1 落选备选。
 
+**AaaS 复审（2026-10-28，#674）：作为 keyed 单写者成立。** 每个租户一本账本是该租户的唯一权威，任一时刻至多一个写者并由 epoch 做 fencing，异地持久性按声明的 RPO：写路径封存期间用异步副本，在 AaaS 上启封 M5 之前须做到 RPO 0。租约、路由与复制都在内核之外；在 `state-ledger.ts` 内加 epoch 守卫须 founder 明确批准。cr-sqlite 不用于服务状态。契约与证伪计划见 [AaaS RFC](rfc/aaas-rfc.zh-CN.md) §3–§5。
+
 #### 8.16 双形态架构冻结
 - **一套账本语义，两种宿主绑定**：本地 = better-sqlite3 直读文件；Web = 同一 schema 跑在每用户 SQLite 文件（或 Postgres，schema 同构）。
 - **`tenant_id` 从第一天就是一等字段**：events/投影/工单/pending_writes 全部带租户列，单用户期恒为 `'local'`，主键空间化防跨用户撞。
 - **执行边界（issue #224 修复）**：`insertEvent` 必写当前 ledger tenant；`readEvents(kind?)`、投影 fold 与 `rebuildProjections(toSeq?)` 必带 tenant 条件；`wish.updated` fold 查当前租户已有 item，跨租户同 `wish_id` 不串读。legacy JSON/JSONL 与 v1 DB 只迁入 `local`；已经被旧 bug 写成 `local` 的非 local 事件缺少可审计 owner，不可由 schema 迁移猜回，只能在有外部证据时另走人工 data-repair issue/PR。
 - **同步 = 账本事件的复制，而非状态的翻译**：events 行带 `tenant_id` + 幂等键，双端合并天然幂等。写必经账本，读必带租户上下文进不变量表。
 - 备选与取舍：本地与 Web 各长一套逻辑——多用户期合并只能推倒重来；云端权威 + 本地缓存——违反红线 6 本地优先；同步投影而非事件——投影是派生态，合并会分叉。
+- **AaaS（2026-10-28，#674）：冻结成立，后置事项激活。** 每用户一个 SQLite 文件成为服务端绑定，同步仍是事件复制，claim/CAS 实装属于 A1（[AaaS RFC](rfc/aaas-rfc.zh-CN.md) §4.2）。
 
 #### 8.17 预订 saga 状态机具名化
 预订/支付/退改的 saga **不引入编排框架（LangGraph 等）**，FSM 落为账本 `pending_writes` 的词汇层（`ts/src/booking-saga.ts`，`booking_saga_fsm.v1` 纯函数）：状态字母表与 CHECK 约束逐字一致，边全函数化。
 
 备选与取舍：LangGraph/Temporal 式框架——第二运行时，违反 harness 基线与复用矩阵；状态散落 SQL 字符串——边语义漂移无词表；多 Agent 提示词协同——隐式依赖。
+
+**AaaS 复审（2026-10-28，#674）：成立。** keyed 单写者把一个租户的 saga 串行化，因此不准入并行写者。在 AaaS 上 saga 状态存于租户账本，且须先具备 RPO 0（持久性模式 D-b）才能启封 M5，详见 [AaaS RFC](rfc/aaas-rfc.zh-CN.md) §4.3。
 
 #### 8.18 效应解译器 `effect_interpreter.v1`
 「效应描述 + 解译器」下沉到 L4 渠道边界——工具/编排层只产纯数据效应值 `{effect, params}`；渠道访问、退避重试、断路器、编译期 mock 全部收敛到解译层。
@@ -81,6 +87,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：
 - **同 revision 重放守门（ordinary TURN 分支）**：先做 confirmed-availability 的 `confirmed_workspace_drift` 拒绝（保持历史特定诊断稳定），再做 generic same-revision 守门；`BookingCopilotTaskRuntime.resumeTask` 对每条普通 `booking.copilot.user.turn.observed` 行做 same-revision 比较——把 durable workspace 语义摘要（剥除 contextRef/revision）与同 revision 上的前一态对比；silent drift 以 `ledger_corrupt:<task>:same_revision_turn_workspace_drift` fail-closed，而不是让旧 public `startTask`（无 live-time CAS）写下的行把 verifiedOffer/loadedOffer/selection 漂移带进重放、把 replayed workspace 变成 checkout authority。显式 `replayUpgradeRequired` reanchor 与 confirmed-availability 的 `confirmed_workspace_drift` 拒绝保留原行为；live-time `startTask` 守门（同 revision 且无 active reanchor → `workspace_mismatch`）仍是首要防线。
 
 明确拒绝的备选：独立聊天预订页；用 breaking v2 替换 v1；自由文本/JSON 执行；把 server outbox 意图当作已展示；在 embedded 面暴露 `Book`。当前能力不包含 portal token、PII 或供应商成本出站；离页自动写/支付已让渡到 M5 WriteGate proposal（`design/write-gate-production-design.md`），多写者或跨 host 则按 ADR-15/16 复审。
+
+**AaaS 复审（2026-10-28，#674）：成立。** 跨主机的连续性来自租户路由，而不是共享状态。接受后的增量：租户在可信接缝处派生，`requestKey` 与 `taskHandle` 以租户为作用域，服务离开回环后以按组织的凭证取代共享 bearer key（A2、A3）。
 
 #### 8.24 ADR-24：turn 预算 = 路由 + wall-clock 双出口（turn-policy / turn-deadline）
 

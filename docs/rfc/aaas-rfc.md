@@ -3,7 +3,7 @@
 # RFC: GoTry as a Multi-User Agent Service (AaaS) — State, Identity, and Deployment
 
 > Role: the A0 design proposal for serving GoTry as one cloud service shared by many users — state layer, tenant model, durability, identity, topology, and the ADR re-review it triggers.
-> Status: **proposal** (A0 of [#674](https://github.com/Danceiny/gotry/issues/674), drafted 2026-10-26). Nothing here is adopted; every ADR keeps its current text until the founder accepts this RFC.
+> Status: **accepted** (A0 of [#674](https://github.com/Danceiny/gotry/issues/674), drafted 2026-10-26, accepted 2026-10-28). The founder merged the proposal in [#675](https://github.com/Danceiny/gotry/pull/675) and directed development to start. No per-question override was given, so Q1–Q7 stand as recommended (§8.1); an override re-opens only the questions it names.
 > Upstream: the founder decision of 2026-10-21 (#674); [architecture](../architecture.md) §8 (ADR-14/15/16/17/23) and §10 (D-15); [master outline](../gotry-master-outline.md) §2 reuse matrix; [transactional-state RFC](transactional-state-rfc.md) TS-5; [LoopX-inspired RFC](loopx-inspired-upgrades-rfc.md) §6.5.
 > Downstream: the A1–A4 work items of #674; the ADR re-review results, absorbed into architecture §8 and [ADR expansions](../adr-expansions.md) on acceptance; [AaaS security design](../design/aaas-security-design.md).
 > Deployment facts: hotel-be `docs/architecture/gotry-backend-deployment-architecture.md`, last verified 2026-10-24. Constraint IDs C1–C16 refer to that document.
@@ -16,7 +16,7 @@
 - **Durability.** Declare the RPO instead of implying "no loss". Asynchronous off-node streaming (an RPO of seconds) is admissible while writes stay sealed. RPO = 0 becomes a precondition for the WriteGate outbox before M5 can unseal on AaaS.
 - **Topology.** A dedicated intranet gotry tier with N replicas and tenant-affine routing sits behind the BFF. A new boundary ADR replaces C2 for that tier. The browser-reachable surface stays zero (C16).
 - **ADR re-review.** ADR-14, ADR-15, ADR-17 and ADR-23 hold with the additions in §5. ADR-16 stays frozen, and its deferred sync and claim items activate.
-- **Decision request.** Answer Q1–Q7 in §8.1. A1 starts only after acceptance. Facts F-1–F-4 are established read-only in parallel.
+- **Decisions.** Q1–Q7 in §8.1 were accepted as recommended on 2026-10-28, and A1 has started. Facts F-1–F-4 are established read-only in parallel.
 
 ## 1. Problem
 
@@ -245,7 +245,7 @@ Simulated drills, fixtures and offline suites never count as A3 or A4 evidence.
 
 ### 8.1 Founder decisions
 
-| # | Question | Recommendation |
+| # | Question | Decision (accepted as recommended, 2026-10-28) |
 |---|---|---|
 | Q1 | Adopt keyed single writer per tenant as ADR-15's restated boundary? | Yes |
 | Q2 | Make the ledger owner the person, with the principal scope as an attribute? | Yes |
@@ -281,7 +281,7 @@ Simulated drills, fixtures and offline suites never count as A3 or A4 evidence.
 - **State discipline.** All A1 tests run on isolated state roots, never on founder runtime state.
 - **Write path.** No WriteGate behavior changes. Booking writes stay sealed.
 - **Language and harness.** No Python; dsh follows main and is not modified.
-- **Same-commit rule.** On acceptance, the owning authorities change in one commit: architecture §8 and §10, ADR expansions, the roadmap and the master outline.
+- **Same-commit rule.** The acceptance changed the owning authorities in one commit: architecture §8, ADR expansions, the roadmap, the master outline and the decision queue. Architecture §10 (D-15) already carried the met trigger and is unchanged.
 
 ## Appendix A. Sources
 
