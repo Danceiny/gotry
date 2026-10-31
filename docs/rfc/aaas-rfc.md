@@ -117,7 +117,7 @@ The goal: many users, each under their own identity, call one cloud GoTry servic
 
 ```text
 <stateRoot>/orgs/<org_id>/
-  gotry-state/bridge.db              # one bridge ledger per organization
+  gotry-state/bridge.db              # target layout; as built in A2: one shared ledger per node with an organization column
   tenants/<tenant_id>/               # the ownership and replication unit
     gotry-state/gotry-state.db       # the ADR-15 ledger, tenant_id = <tenant_id>
     ...                              # planner working files, tickets, artifacts (F-2)
@@ -163,7 +163,7 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 - **Authorization at one seam.** Every handler resolves `(organization, tenant)` once, at the seam. Ledger handles are tenant-bound objects. No API accepts a raw tenant id.
 - **Quotas and metering** per tenant and per organization: concurrent turns, turn rate, LLM token and cost budget priced by the frozen table (ADR-20), bridge job rate, per-site pacing per organization, and ledger size.
 - **A2 exit suite.** Forged tenant fields, a foreign `taskHandle` or `requestKey`, path-shaped ids and cross-organization bridge results are all rejected.
-- **As built in A2.** `deriveSeamTenant` is the one place a tenant is derived: from the caller an injected `CallerAuthenticator` vouched for, into an opaque `SeamTenant` that every quota API requires. A request is authenticated, placed in its tenant, admitted against its quotas (a typed 429 before the body is read, a lease is taken or a planner starts) and served from the guarded ledger of `TenantRouter.openTenant`. The decision work runs inside `handle.runAsync`, so a handoff drains it and a lease lost mid-stream cuts the connection instead of acknowledging. The bridge ledger and job matching carry an organization. How the BFF proves a user's identity on the wire is not decided here: until A3 supplies a production authenticator, deployments keep running the shared-key form of the surface. Evidence: run-all §93 to §95.
+- **As built in A2.** `deriveSeamTenant` is the one place a tenant is derived: from the caller an injected `CallerAuthenticator` vouched for, into an opaque `SeamTenant` that every quota API requires. A request is authenticated, placed in its tenant, admitted against its quotas (a typed 429 before the body is read, a lease is taken or a planner starts, for concurrency, rate and LLM budget; a ledger-size refusal is decided once the tenant is open) and served from the guarded ledger of `TenantRouter.openTenant`. The decision work runs inside `handle.runAsync`, so a handoff drains it and a lease lost mid-stream cuts the connection instead of acknowledging; a planner error that coincides with a lost lease cuts that one connection too, and whatever escapes a request ends that request, never the replica. The bridge ledger and job matching carry an organization (one shared `bridge.db` with an `organization` column; the migration of a legacy file is one way, so roll back only while every row is `local`, otherwise restore a copy taken before the first start of the new binary). How the BFF proves a user's identity on the wire is not decided here: until A3 supplies a production authenticator, deployments keep running the shared-key form of the surface. Evidence: run-all §93 to §95.
 
 ### 4.5 Deployment topology (A3)
 

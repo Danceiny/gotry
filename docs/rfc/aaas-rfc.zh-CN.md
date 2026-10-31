@@ -117,7 +117,7 @@ founder 于 2026-10-21 立项 AaaS（#674）。这满足了 D-15 的「获批的
 
 ```text
 <stateRoot>/orgs/<org_id>/
-  gotry-state/bridge.db              # 每个组织一本桥账本
+  gotry-state/bridge.db              # 目标布局；A2 落地形态：每个节点一份共享账本、带组织列
   tenants/<tenant_id>/               # 所有权与复制的单位
     gotry-state/gotry-state.db       # ADR-15 账本，tenant_id = <tenant_id>
     ...                              # planner 工作文件、工单、artifact（F-2）
@@ -163,7 +163,7 @@ lease record: { key: "<org_id>/<tenant_id>", owner: <replica_id>, epoch: <int>, 
 - **在单一接缝处授权。** 每个 handler 只在接缝处解析一次 `(organization, tenant)`。账本句柄是绑定租户的对象。没有任何 API 接受裸 tenant id。
 - **配额与计量**按租户、按组织计：并发轮次、轮次速率、按冻结价目表（ADR-20）计价的 LLM token 与成本预算、桥 job 速率、按组织的分站点节律，以及账本大小。
 - **A2 退出套件。** 伪造的租户字段、他人的 `taskHandle` 或 `requestKey`、形如路径的 id，以及跨组织的桥回包，全部被拒。
-- **A2 的落地形态。** `deriveSeamTenant` 是服务里唯一派生租户的地方：输入是注入的 `CallerAuthenticator` 所担保的调用方，输出是不透明的 `SeamTenant`，所有配额 API 都要求它。一个请求先被认证、被放进自己的租户、按配额准入（typed 429 发生在读取请求体、取得租约或启动 planner 之前），再由 `TenantRouter.openTenant` 返回的带守卫账本来服务。决策工作在 `handle.runAsync` 内运行，因此交接会排空它，流中途失去租约会切断连接，而不是确认。桥账本与 job 匹配带有组织维度。BFF 在线路上如何证明用户身份，此处不作决定：在 A3 提供生产认证器之前，部署继续运行共享 key 形态的服务面。证据：run-all §93 至 §95。
+- **A2 的落地形态。** `deriveSeamTenant` 是服务里唯一派生租户的地方：输入是注入的 `CallerAuthenticator` 所担保的调用方，输出是不透明的 `SeamTenant`，所有配额 API 都要求它。一个请求先被认证、被放进自己的租户、按配额准入（typed 429 发生在读取请求体、取得租约或启动 planner 之前，针对并发、速率与 LLM 预算；账本大小的拒绝在租户打开之后才判定），再由 `TenantRouter.openTenant` 返回的带守卫账本来服务。决策工作在 `handle.runAsync` 内运行，因此交接会排空它，流中途失去租约会切断连接，而不是确认；planner 报错恰好撞上丢失的租约时同样只切断那一个连接，任何逃出单个请求的错误都只结束该请求，绝不结束副本进程。桥账本与 job 匹配带有组织维度（每个节点一份带 `organization` 列的共享 `bridge.db`；旧文件的迁移是单向的，所以只有当所有行都是 `local` 时才能回滚，否则恢复首次启动新二进制之前做好的副本）。BFF 在线路上如何证明用户身份，此处不作决定：在 A3 提供生产认证器之前，部署继续运行共享 key 形态的服务面。证据：run-all §93 至 §95。
 
 ### 4.5 部署拓扑（A3）
 
