@@ -198,9 +198,9 @@ function hasOrganizationColumn(db: Database.Database, table: string): boolean {
 function migrateOrganizationDimension(db: Database.Database): void {
   const pending = (): string[] => ORGANIZATION_TABLES.filter((table) => !hasOrganizationColumn(db, table))
   if (pending().length > 0) migrateTables(db, pending)
-  // An older binary recreates its single-column unique index on idem_key every time it opens the file, so a file that went
-  // new, old, new has nothing left to migrate and still holds it: one organization's key would block another's. Drop it on
-  // every open (a no-op when absent).
+  // The single-column unique index on idem_key of the legacy schema would make two organizations' identical keys refuse each
+  // other (the per-organization one replaces it). An older binary recreates it every time it opens the file, so a file that
+  // went new, old, new has nothing left to migrate and still holds it. Drop it on every open (a no-op when absent).
   if (hasIndex(db, 'bridge_events_idem_key')) db.transaction(() => { db.exec('DROP INDEX IF EXISTS bridge_events_idem_key') }).immediate()
 }
 
@@ -227,8 +227,6 @@ function migrateTables(db: Database.Database, pending: () => string[]): void {
       }
       db.exec(`DROP TABLE ${table}__legacy`)
     }
-    // 旧的按 idem_key 单列唯一索引会让两个组织的同名幂等键互相拒绝,换成 (organization, idem_key)
-    db.exec('DROP INDEX IF EXISTS bridge_events_idem_key')
   }).immediate()
 }
 
