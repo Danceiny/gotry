@@ -27,8 +27,8 @@
       "id": "K4",
       "file": "src/tenant-seam/process-governor.ts",
       "note": "only the root of a breaching tree is killed",
-      "find": "this.kill(sample.pids)",
-      "replace": "this.kill(sample.pids.slice(0, 1))"
+      "find": "        if (breach) this.end(id, watch, breach, sample.pids)",
+      "replace": "        if (breach) this.end(id, watch, breach, sample.pids.slice(0, 1))"
     },
     {
       "id": "K5",
@@ -41,8 +41,8 @@
       "id": "K6",
       "file": "src/tenant-seam/process-governor.ts",
       "note": "a breached watch stays registered and fires again",
-      "find": "        this.watches.delete(id)\n        try {\n          watch.onBreach(breach)",
-      "replace": "        try {\n          watch.onBreach(breach)"
+      "find": "    this.watches.delete(id)\n    try {\n      watch.onBreach(breach)",
+      "replace": "    try {\n      watch.onBreach(breach)"
     },
     {
       "id": "K7",
@@ -62,8 +62,8 @@
       "id": "K9",
       "file": "src/tenant-seam/process-governor.ts",
       "note": "a throwing breach handler stops the kill from being reported as handled",
-      "find": "        } catch (error) {\n          this.report(error)\n        } finally {\n          this.kill(sample.pids)\n        }",
-      "replace": "        } finally {\n          this.kill(sample.pids)\n        }"
+      "find": "    } catch (error) {\n      this.report(error)\n    } finally {\n      this.kill(pids)\n    }",
+      "replace": "    } finally {\n      this.kill(pids)\n    }"
     },
     {
       "id": "K10",
@@ -221,10 +221,66 @@
     },
     {
       "id": "K30",
-      "file": "src/booking-surface/startup.ts",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
       "note": "limits that need no sampler are probed anyway",
-      "find": "  if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return\n  await (limits.governor",
-      "replace": "  await (limits.governor"
+      "find": "  if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return\n  await (limits.governor ?? sharedProcessTreeGovernor()).probe()",
+      "replace": "  await (limits.governor ?? sharedProcessTreeGovernor()).probe()"
+    },
+    {
+      "id": "K33",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a tree that cannot be seen for N ticks in a row is left alone: the sampler fails open",
+      "find": "          if (watch.blind >= this.maxBlindTicks) this.end(id, watch, { kind: 'blind', limit: this.maxBlindTicks, observed: watch.blind }, [])\n",
+      "replace": ""
+    },
+    {
+      "id": "K34",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "one good read does not start the blind count over, so blind ticks add up across a healthy tree",
+      "find": "        watch.blind = 0\n",
+      "replace": ""
+    },
+    {
+      "id": "K35",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a read of the table that never settles is not raced against a timer, so it stops the sampler",
+      "find": "        rows = await withTimeout(this.table(), this.tableTimeoutMs)\n      } catch (error) {\n        this.sampleFailures += 1",
+      "replace": "        rows = await this.table()\n      } catch (error) {\n        this.sampleFailures += 1"
+    },
+    {
+      "id": "K36",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a blind-tick limit of zero is accepted",
+      "find": "    assertPositive('maxBlindTicks', this.maxBlindTicks)\n",
+      "replace": ""
+    },
+    {
+      "id": "K37",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a table timeout of zero is accepted",
+      "find": "    assertPositive('tableTimeoutMs', this.tableTimeoutMs)\n",
+      "replace": ""
+    },
+    {
+      "id": "K38",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "the blind breach comes one tick late",
+      "find": "if (watch.blind >= this.maxBlindTicks)",
+      "replace": "if (watch.blind > this.maxBlindTicks)"
+    },
+    {
+      "id": "K39",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "the probe is not raced against a timer, so a table that never answers passes as \"not failed\" forever",
+      "find": "      rows = await withTimeout(this.table(), this.tableTimeoutMs)\n    } catch (error) {\n      throw new ProcessTableUnavailableError(error)",
+      "replace": "      rows = await this.table()\n    } catch (error) {\n      throw new ProcessTableUnavailableError(error)"
+    },
+    {
+      "id": "K40",
+      "file": "src/booking-surface/dsh-planner.ts",
+      "note": "only the first port of a process checks that the sampler can see; later ones start a child blind",
+      "find": "  if (options.resourceLimits) await assertManagedDshLimitsEnforceable(options.resourceLimits)\n",
+      "replace": ""
     }
   ]
 }

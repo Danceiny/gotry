@@ -78,6 +78,13 @@
       "note": "observers are not told the caller's organization",
       "find": "options.callerOrganization ? { supplier, entryUrl, organization } : { supplier, entryUrl }",
       "replace": "{ supplier, entryUrl }"
+    },
+    {
+      "id": "X12",
+      "file": "src/backend/modules/booking-executor.ts",
+      "note": "a body that is the JSON value null is read as a request and crashes the handler",
+      "find": "typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)",
+      "replace": "typeof decoded !== 'object' || Array.isArray(decoded)"
     }
   ]
 }

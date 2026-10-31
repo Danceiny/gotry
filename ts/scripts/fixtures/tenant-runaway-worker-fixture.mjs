@@ -9,7 +9,9 @@ const MIB = 1024 * 1024
 if (process.env.TENANT_FIXTURE_PID_FILE) writeFileSync(process.env.TENANT_FIXTURE_PID_FILE, String(process.pid))
 // TENANT_FIXTURE_NO_LIFECYCLE=1: a worker that never says who it is, so nothing can attach a governor to it.
 if (process.env.TENANT_FIXTURE_NO_LIFECYCLE !== '1') {
-  process.stdout.write(`${JSON.stringify({ lifecycle: 'worker_started', workerPid: process.pid, parentPid: process.ppid })}\n`)
+  // TENANT_FIXTURE_LIE_PID=1: it names a process that is not its own, so a sampler that trusts it would watch nothing.
+  const reported = process.env.TENANT_FIXTURE_LIE_PID === '1' ? 2_147_000_000 : process.pid
+  process.stdout.write(`${JSON.stringify({ lifecycle: 'worker_started', workerPid: reported, parentPid: process.ppid })}\n`)
 }
 
 const hold = []

@@ -32,7 +32,9 @@ const RESULT: BookingObserveResult = {
 }
 
 let passed = 0
+const only = process.env.GOTRY_TEST_ONLY
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
+  if (only && !label.startsWith(only)) return
   await assertion()
   passed += 1
   console.log(`  ok - ${label}`)
@@ -194,6 +196,28 @@ await check('E8 the default owner is local: with an explicit local owner only lo
   assert.equal((await h.post('cred-local', { supplier: 'ctrip-flight' })).status, 400)
   assert.equal((await h.post('cred-local', { supplier: 'dida-portal', entryUrl: 'https://evil.example.com/x' })).status, 400)
   assert.equal(h.browser.length, 1, 'only the valid request reached the browser')
+})
+
+await check('E9 a body that is JSON but not an object is a 400 for any bearer holder, and the process stays up', async () => {
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown): void => { unhandled.push(reason) }
+  process.on('unhandledRejection', onUnhandled)
+  try {
+    for (const hostile of [{ multi: false }, { multi: true, hostBrowserOrganization: 'acme' }] as const) {
+      const h = await started(hostile)
+      const credential = hostile.multi ? 'cred-acme' : null
+      for (const raw of ['null', '[]', '1', '"x"', 'true', '[{"supplier":"dida-portal"}]']) {
+        const response = await fetch(`${h.base}/v1/booking/observe`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}`, ...(credential === null ? {} : { 'x-test-credential': credential }) }, body: raw, signal: AbortSignal.timeout(3_000) })
+          .catch((error: unknown) => { throw new Error(`${raw} was never answered: ${String(error)}`) })
+        assert.equal(response.status, 400, `${raw} is refused`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.equal((await h.post(credential)).status, 200, 'and a good request is served afterwards')
+    }
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+  assert.deepEqual(unhandled, [], 'nothing was left rejected')
 })
 
 for (const h of open) await h.close()

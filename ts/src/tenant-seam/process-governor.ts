@@ -32,7 +32,11 @@ export interface TreeLimits {
 }
 
 export interface TreeBreach {
-  readonly kind: 'memory' | 'cpu'
+  /**
+   * `blind` is the sampler failing closed: the tree could not be seen for `limit` ticks in a row (the table could not be
+   * read, timed out, or did not show the watched root), so nothing about its limits can be said and the owner is told.
+   */
+  readonly kind: 'memory' | 'cpu' | 'blind'
   readonly limit: number
   readonly observed: number
 }
@@ -69,6 +73,10 @@ export class ProcessTableUnavailableError extends Error {
 export interface ProcessTreeGovernorOptions {
   /** Time between samples. Default 1000. */
   readonly intervalMs?: number
+  /** Ticks in a row on which a watched tree cannot be seen before it is treated as a breach. Default 10. */
+  readonly maxBlindTicks?: number
+  /** Longest a read of the process table may take before the tick counts it as a failure. Default 5000. */
+  readonly tableTimeoutMs?: number
   /** The process table. Default: `ps`. Injected by the suites. */
   readonly table?: ProcessTable
   /** Kills the sampled processes. Default: SIGKILL each pid. Injected by the suites. */
@@ -78,6 +86,8 @@ export interface ProcessTreeGovernorOptions {
 }
 
 const DEFAULT_INTERVAL_MS = 1_000
+const DEFAULT_MAX_BLIND_TICKS = 10
+const DEFAULT_TABLE_TIMEOUT_MS = 5_000
 const PS_TIMEOUT_MS = 3_000
 const PS_MAX_BUFFER_BYTES = 16 * 1024 * 1024
 
@@ -148,6 +158,16 @@ export function treeOf(rows: readonly ProcessRow[], target: TreeTarget): TreeSam
   return { pids, rssBytes, cpuSeconds }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('the process table did not answer in time')), ms)
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (error: unknown) => { clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 function breachOf(sample: TreeSample, limits: TreeLimits): TreeBreach | null {
   if (limits.maxRssBytes !== undefined && sample.rssBytes > limits.maxRssBytes) {
     return { kind: 'memory', limit: limits.maxRssBytes, observed: sample.rssBytes }
@@ -172,10 +192,14 @@ interface Watch {
   readonly target: TreeTarget
   readonly limits: TreeLimits
   readonly onBreach: (breach: TreeBreach) => void
+  /** Ticks in a row on which this tree could not be seen. */
+  blind: number
 }
 
 export class ProcessTreeGovernor {
   private readonly intervalMs: number
+  private readonly maxBlindTicks: number
+  private readonly tableTimeoutMs: number
   private readonly table: ProcessTable
   private readonly kill: (pids: readonly number[]) => void
   private readonly onFault: ((error: unknown) => void) | undefined
@@ -188,6 +212,10 @@ export class ProcessTreeGovernor {
   constructor(options: ProcessTreeGovernorOptions = {}) {
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS
     assertPositive('intervalMs', this.intervalMs)
+    this.maxBlindTicks = options.maxBlindTicks ?? DEFAULT_MAX_BLIND_TICKS
+    assertPositive('maxBlindTicks', this.maxBlindTicks)
+    this.tableTimeoutMs = options.tableTimeoutMs ?? DEFAULT_TABLE_TIMEOUT_MS
+    assertPositive('tableTimeoutMs', this.tableTimeoutMs)
     this.table = options.table ?? readPsTable
     this.kill = options.kill ?? killEach
     this.onFault = options.onFault
@@ -214,7 +242,7 @@ export class ProcessTreeGovernor {
     assertPositive('maxCpuSeconds', limits.maxCpuSeconds)
     if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return () => undefined
     const id = this.nextId++
-    this.watches.set(id, { target, limits, onBreach })
+    this.watches.set(id, { target, limits, onBreach, blind: 0 })
     this.startTimer()
     return () => {
       this.watches.delete(id)
@@ -230,7 +258,7 @@ export class ProcessTreeGovernor {
   async probe(): Promise<void> {
     let rows: readonly ProcessRow[]
     try {
-      rows = await this.table()
+      rows = await withTimeout(this.table(), this.tableTimeoutMs)
     } catch (error) {
       throw new ProcessTableUnavailableError(error)
     }
@@ -243,27 +271,25 @@ export class ProcessTreeGovernor {
     if (this.ticking || this.watches.size === 0) return
     this.ticking = true
     try {
-      let rows: readonly ProcessRow[]
+      let rows: readonly ProcessRow[] | null = null
       try {
-        rows = await this.table()
+        rows = await withTimeout(this.table(), this.tableTimeoutMs)
       } catch (error) {
         this.sampleFailures += 1
         this.report(error)
-        return
       }
       for (const [id, watch] of [...this.watches]) {
-        const sample = treeOf(rows, watch.target)
-        if (!sample) continue
-        const breach = breachOf(sample, watch.limits)
-        if (!breach) continue
-        this.watches.delete(id)
-        try {
-          watch.onBreach(breach)
-        } catch (error) {
-          this.report(error)
-        } finally {
-          this.kill(sample.pids)
+        const sample = rows ? treeOf(rows, watch.target) : null
+        if (!sample) {
+          // A tree that cannot be seen is not a tree within its limits. A few such ticks happen (a worker exiting between
+          // two samples); a run of them means the sampler governs nothing, and failing open would hide it.
+          watch.blind += 1
+          if (watch.blind >= this.maxBlindTicks) this.end(id, watch, { kind: 'blind', limit: this.maxBlindTicks, observed: watch.blind }, [])
+          continue
         }
+        watch.blind = 0
+        const breach = breachOf(sample, watch.limits)
+        if (breach) this.end(id, watch, breach, sample.pids)
       }
     } finally {
       this.ticking = false
@@ -274,6 +300,18 @@ export class ProcessTreeGovernor {
   close(): void {
     this.watches.clear()
     this.stopTimer()
+  }
+
+  /** The watch is over: the owner is told why, and whatever was seen of the tree is killed. */
+  private end(id: number, watch: Watch, breach: TreeBreach, pids: readonly number[]): void {
+    this.watches.delete(id)
+    try {
+      watch.onBreach(breach)
+    } catch (error) {
+      this.report(error)
+    } finally {
+      this.kill(pids)
+    }
   }
 
   private report(error: unknown): void {
