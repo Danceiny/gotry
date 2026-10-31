@@ -152,9 +152,9 @@
     {
       "id": "J22",
       "file": "src/tenant-state/tenant-router.ts",
-      "note": "a second forget runs beside the first",
-      "find": "    if (this.state === 'forgetting') throw new TenantDrainingError(this.deps.key)\n    // Nothing is served from here on",
-      "replace": "    // Nothing is served from here on"
+      "note": "a second forget runs beside the first, and one runs on a handle that is closed",
+      "find": "    if (this.state === 'forgetting' || this.state === 'closed') throw new TenantDrainingError(this.deps.key)\n",
+      "replace": ""
     },
     {
       "id": "J23",
@@ -214,17 +214,17 @@
     },
     {
       "id": "J31",
-      "file": "src/tenant-state/epoch-copies.ts",
+      "file": "src/tenant-state/tenant-router.ts",
       "note": "the dead epochs of a forgotten tenant are not deleted when it is next opened",
-      "find": "  if (lease.forgottenAtEpoch > 0) await sweepMaskedCopies(durable, key, lease.forgottenAtEpoch).catch(() => 0)\n",
+      "find": "    if (lease.forgottenAtEpoch > 0) void sweepMaskedCopies(options.durable, key, lease.forgottenAtEpoch).catch(() => undefined)\n",
       "replace": ""
     },
     {
       "id": "J32",
       "file": "src/tenant-state/epoch-copies.ts",
-      "note": "forgetting deletes the directory the caller names, whichever it is",
-      "find": "  assertOwnTenantRoot(context)\n  return key",
-      "replace": "  return key"
+      "note": "a root the caller names is used as it is, whichever directory it is",
+      "find": "  return { key, root: ownTenantRoot(context) }",
+      "replace": "  return { key, root: context.tenantRoot }"
     },
     {
       "id": "J33",
@@ -245,6 +245,97 @@
       "file": "src/tenant-state/tenant-router.ts",
       "note": "something can be deleted from the view by a consumer",
       "find": "    deleteProperty: () => false,\n",
+      "replace": ""
+    },
+    {
+      "id": "J36",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a second renewal chain starts while a renewal is still under way",
+      "find": "this.state === 'closed' || this.renewTimer || this.renewTicking) return",
+      "replace": "this.state === 'closed' || this.renewTimer) return"
+    },
+    {
+      "id": "J37",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a sweep that fails at open becomes an unhandled rejection",
+      "find": "sweepMaskedCopies(options.durable, key, lease.forgottenAtEpoch).catch(() => undefined)",
+      "replace": "sweepMaskedCopies(options.durable, key, lease.forgottenAtEpoch)"
+    },
+    {
+      "id": "J38",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a forget is accepted on a handle whose abandon is under way",
+      "find": "if (this.state === 'forgetting' || this.state === 'closed') throw new TenantDrainingError(this.deps.key)",
+      "replace": "if (this.state === 'forgetting') throw new TenantDrainingError(this.deps.key)"
+    },
+    {
+      "id": "J39",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "closing the router does not wait for a forget that is under way",
+      "find": "    await this.forgetsUnderWay()\n    return queue",
+      "replace": "    return queue"
+    },
+    {
+      "id": "J40",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the prototype of the ledger the router holds can be changed through the view",
+      "find": "    setPrototypeOf: () => false,\n",
+      "replace": ""
+    },
+    {
+      "id": "J41",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the ledger the router holds can be frozen or sealed through the view",
+      "find": "    preventExtensions: () => false,\n",
+      "replace": ""
+    },
+    {
+      "id": "J42",
+      "file": "src/tenant-state/epoch-copies.ts",
+      "note": "forget deletes everything under the tenant's key, a successor's epoch included",
+      "find": "const deletedObjects = await sweepMaskedCopies(context.durable, key, record.forgottenAtEpoch)",
+      "replace": "const deletedObjects = await context.durable.deletePrefix(`${key}/`)"
+    },
+    {
+      "id": "J43",
+      "file": "src/tenant-state/epoch-copies.ts",
+      "note": "the directory that is deleted is the string the caller passed, not the one that was checked",
+      "find": "  rmSync(root, { recursive: true, force: true })\n  await context.lease.release()",
+      "replace": "  rmSync(context.tenantRoot, { recursive: true, force: true })\n  await context.lease.release()"
+    },
+    {
+      "id": "J44",
+      "file": "src/tenant-state/epoch-copies.ts",
+      "note": "discarding the local ledger takes any root",
+      "find": "  const file = ledgerDbPath(checkedContext(context).root)",
+      "replace": "  const file = ledgerDbPath(context.tenantRoot)"
+    },
+    {
+      "id": "J45",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a drain timeout of zero or a fraction is accepted",
+      "find": "    if (options.drainTimeoutMs !== undefined && (!Number.isSafeInteger(options.drainTimeoutMs) || options.drainTimeoutMs < 1 || options.drainTimeoutMs > MAX_TIMER_MS)) throw new RangeError(`drainTimeoutMs must be an integer within [1, ${MAX_TIMER_MS}]`)\n",
+      "replace": ""
+    },
+    {
+      "id": "J46",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a close concurrency of zero or a fraction is accepted",
+      "find": "    if (options.closeConcurrency !== undefined && (!Number.isSafeInteger(options.closeConcurrency) || options.closeConcurrency < 1)) throw new RangeError('closeConcurrency must be a positive integer')\n",
+      "replace": ""
+    },
+    {
+      "id": "J47",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the close concurrency that was set is ignored",
+      "find": "Math.min(this.options.closeConcurrency ?? DEFAULT_CLOSE_CONCURRENCY, queue.length)",
+      "replace": "Math.min(DEFAULT_CLOSE_CONCURRENCY, queue.length)"
+    },
+    {
+      "id": "J48",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a forget under way is not registered with the router",
+      "find": "    this.deps.retain(work.then(() => undefined, () => undefined))\n",
       "replace": ""
     }
   ]

@@ -92,6 +92,20 @@ class OverwritingDurableStore implements DurableStore {
 }
 
 /** Breaks another rule: the partial last segment of a prefix is ignored, so a listing returns the whole directory. */
+/** A store whose delete treats the prefix as raw text, so `acme` would take `acme2` too. */
+class RawPrefixDeleteDurableStore implements DurableStore {
+  constructor(private readonly inner: DurableStore, private readonly directory: string) {}
+
+  putIfAbsent(key: string, bytes: Uint8Array): Promise<boolean> { return this.inner.putIfAbsent(key, bytes) }
+  get(key: string): Promise<Uint8Array | null> { return this.inner.get(key) }
+  list(prefix: string): Promise<string[]> { return this.inner.list(prefix) }
+  async deletePrefix(prefix: string): Promise<number> {
+    const keys = await this.inner.list(prefix)
+    for (const key of keys) rmSync(join(this.directory, ...key.split('/')), { force: true })
+    return keys.length
+  }
+}
+
 class DirectoryOnlyListDurableStore implements DurableStore {
   private readonly inner: DurableStore
 
@@ -241,6 +255,8 @@ try {
     assert.ok(names.includes('sixteen concurrent puts of one key create it exactly once with intact bytes'), names.join(' | '))
     const directoryOnly = await runDurableStoreConformance(new DirectoryOnlyListDurableStore(new DirDurableStore(join(root, 'broken-listing'))), 'listing')
     assert.ok(directoryOnly.map(failure => failure.check).includes('list returns sorted keys under a prefix, including a partial last segment'), JSON.stringify(directoryOnly))
+    const rawDelete = await runDurableStoreConformance(new RawPrefixDeleteDurableStore(new DirDurableStore(join(root, 'broken-delete')), join(root, 'broken-delete')), 'rawdelete')
+    assert.ok(rawDelete.map(failure => failure.check).includes('delete takes whole segments only: a prefix that stops inside a name would also take its neighbours'), JSON.stringify(rawDelete))
   })
 
   // ---- S: publishing ------------------------------------------------------------------------
@@ -604,7 +620,7 @@ try {
     assert.deepEqual(idemKeys(r2.ledger), [], 'the tenant starts from nothing')
   })
 
-  await check('F2 a copy that a superseded owner uploads after the forget is masked by the floor, removed when the tenant is next opened, and by the sweep at any other time', async () => {
+  await check('F2 a copy that a superseded owner uploads after the forget is masked by the floor and removed by the sweep', async () => {
     const world = makeWorld('f2')
     const frozen = world.replicaClock()
     const r1 = await boot(world, 'r1', { clock: frozen })
@@ -630,12 +646,6 @@ try {
     assert.equal(r3.lease.forgottenAtEpoch, 2)
     assert.equal(r3.restored.restoredFrom, null, 'the floor masks every copy at or below epoch 2')
     assert.deepEqual(idemKeys(r3.ledger), [])
-    assert.deepEqual(await world.store.list(`${KEY}/e00000001/`), [], 'the open of the next owner already deleted what the dead epoch held')
-    assert.equal(await sweepMaskedCopies(world.store, KEY, r3.lease.forgottenAtEpoch), 0, 'so a sweep finds nothing to do')
-
-    // The same owner is slow twice: what it uploads after the open is found by the sweep, which an operator runs at any time.
-    assert.equal(await world.store.putIfAbsent(snapKey(1, 1, 'db'), oldImage), true)
-    assert.equal(await world.store.putIfAbsent(snapKey(1, 1, 'json'), oldManifest), true)
     assert.equal(await sweepMaskedCopies(world.store, KEY, r3.lease.forgottenAtEpoch), 2)
     assert.deepEqual(await world.store.list(`${KEY}/e00000001/`), [])
   })

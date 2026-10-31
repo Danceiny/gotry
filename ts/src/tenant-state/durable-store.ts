@@ -7,6 +7,10 @@
  * it exists and a stale writer can never replace what a newer owner relies on. Epoch-conditional
  * appends (durability mode D-b) are a later refinement of the same primitive.
  *
+ * Every call must settle. A binding gives each request a deadline and fails with `DurableStoreUnavailableError` when it
+ * passes: the router renews a tenant's lease while a flush or a forget waits on the store, so a call that never returns
+ * holds the tenant on its replica until the process dies.
+ *
  * `DirDurableStore` is the reference implementation on a local directory. It stands in for the
  * S3-compatible store of the real deployment, whose binding must pass the same conformance
  * checks before it holds a real copy.

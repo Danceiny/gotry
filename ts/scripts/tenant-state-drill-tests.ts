@@ -324,7 +324,8 @@ try {
   const viewAcks = logs.filter(e => e.t === 'ack' && e.via === 'view').length
   const viewRefusals = logs.filter(e => e.t === 'refused' && e.via === 'view')
   ok(viewAcks > 0, `I5 a consumer that kept the ledger wrote ${viewAcks} acknowledged events through it while its replica handed off, and none of them is missing from the final images`)
-  ok(viewRefusals.length > 0 && viewRefusals.every(e => e.code === 'GOTRY_TENANT_DRAINING'), `I5 once the final image was being taken that consumer was refused with the draining error (${viewRefusals.length} refusals)`)
+  ok(viewRefusals.length > 0 && viewRefusals.every(e => (e.code ?? '').startsWith('GOTRY_TENANT_')), `I5 every refusal of that consumer is a typed tenant error (${viewRefusals.length} refusals), and not an untyped failure`)
+  ok(viewRefusals.some(e => e.code === 'GOTRY_TENANT_DRAINING'), 'I5 at least one of them is the draining error: once the final image was being taken, the view said so (a replica starved past its lease may be fenced instead)')
 
   const killed = killedEpochs.length
   console.log(`tenant-state-drill-tests: ${passed} assertions passed (${killed} SIGKILLs, 1 SIGSTOP past the lease, 1 graceful handoff, ${totalAcks} acknowledged writes, ${totalLost} lost in crashed tails)`)

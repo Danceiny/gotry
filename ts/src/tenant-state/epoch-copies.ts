@@ -213,24 +213,26 @@ function verifyCandidate(bytes: Uint8Array, manifest: SnapshotManifest, ledgerTe
 
 // ---- publishing ----------------------------------------------------------------
 
-function assertContext(context: EpochCopyContext): string {
+/** The lease key of the context and the tenant root that was checked: every file operation below uses that root, not the string the caller passed. */
+function checkedContext(context: EpochCopyContext): { readonly key: string; readonly root: string } {
   const key = leaseKeyFor(context.organization, context.ledgerTenant)
   if (context.lease.key !== key) throw new RangeError(`the lease ${context.lease.key} does not belong to tenant ${key}`)
-  assertOwnTenantRoot(context)
-  return key
+  return { key, root: ownTenantRoot(context) }
 }
 
 /**
  * `forgetTenant` deletes the tenant root recursively, and the root comes from the caller. It has to be the directory
  * `tenantRootFor` lays out for exactly this tenant, `<state root>/orgs/<organization>/tenants/<tenant>`, so a mistaken or
- * hostile context can name no other directory.
+ * hostile context can name no other directory. The resolved path is returned: the string that was checked is the one that
+ * gets deleted, so a `..` behind a symlink cannot point the deletion somewhere else.
  */
-function assertOwnTenantRoot(context: EpochCopyContext): void {
+function ownTenantRoot(context: EpochCopyContext): string {
   const expectedTail = tenantRootFor('/', context.organization, context.ledgerTenant)
   const actual = resolve(context.tenantRoot)
   if (!isAbsolute(context.tenantRoot) || !actual.endsWith(expectedTail)) {
     throw new RangeError(`the tenant root ${JSON.stringify(context.tenantRoot.slice(0, 200))} is not the root of tenant ${leaseKeyFor(context.organization, context.ledgerTenant)}`)
   }
+  return actual
 }
 
 /**
@@ -238,13 +240,13 @@ function assertOwnTenantRoot(context: EpochCopyContext): void {
  * epoch prefix. The lease is checked before the work and again right before the upload.
  */
 export async function publishSnapshot(context: EpochCopyContext, options: { nowMs?: () => number } = {}): Promise<SnapshotManifest> {
-  const key = assertContext(context)
+  const { key, root } = checkedContext(context)
   const { durable, lease, ledgerTenant } = context
   lease.assertHeld()
   const scratch = mkdtempSync(join(tmpdir(), 'gotry-snapshot-'))
   try {
     const imagePath = join(scratch, 'image.db')
-    const source = new Database(ledgerDbPath(context.tenantRoot), { fileMustExist: true })
+    const source = new Database(ledgerDbPath(root), { fileMustExist: true })
     try {
       source.pragma('busy_timeout = 8000')
       await source.backup(imagePath)
@@ -415,17 +417,13 @@ function evictCachedLedger(tenantRoot: string, ledgerTenant: string): void {
  * discarded: only the durable copy is authoritative.
  */
 export async function restoreTenantLedger(context: EpochCopyContext): Promise<RestoreResult> {
-  const key = assertContext(context)
-  const { durable, lease, ledgerTenant, tenantRoot } = context
+  const { key, root: tenantRoot } = checkedContext(context)
+  const { durable, lease, ledgerTenant } = context
   lease.assertHeld()
   const resolution = await resolveRestorePoint(
     durable, key, ledgerTenant, lease.epoch, lease.forgottenAtEpoch,
     (bytes, manifest) => verifyCandidate(bytes, manifest, ledgerTenant),
   )
-  lease.assertHeld()
-  // Copies at or below the forgotten floor are dead whoever wrote them, a superseded owner's late upload included: delete
-  // them now. A failed sweep must not keep the tenant from opening; the next open does it again.
-  if (lease.forgottenAtEpoch > 0) await sweepMaskedCopies(durable, key, lease.forgottenAtEpoch).catch(() => 0)
   lease.assertHeld()
 
   evictCachedLedger(tenantRoot, ledgerTenant)
@@ -454,7 +452,7 @@ export async function restoreTenantLedger(context: EpochCopyContext): Promise<Re
  * of the tenant's directory, such as a planner's working files, are not the ledger's and stay.
  */
 export function discardLocalLedger(context: EpochCopyContext): void {
-  const file = ledgerDbPath(context.tenantRoot)
+  const file = ledgerDbPath(checkedContext(context).root)
   for (const path of [file, `${file}-wal`, `${file}-shm`]) rmSync(path, { force: true })
 }
 
@@ -464,11 +462,14 @@ export function discardLocalLedger(context: EpochCopyContext): void {
  * local files go; then the lease is handed back. The caller closes the tenant's ledger first.
  */
 export async function forgetTenant(context: EpochCopyContext): Promise<{ readonly deletedObjects: number; readonly floor: number }> {
-  const key = assertContext(context)
+  const { key, root } = checkedContext(context)
   context.lease.assertHeld()
   const record = await context.lease.markForgotten()
-  const deletedObjects = await context.durable.deletePrefix(`${key}/`)
-  rmSync(context.tenantRoot, { recursive: true, force: true })
+  // Only the epochs at or below the floor that was just raised are the forgotten tenure's. An owner that was paused between
+  // raising the floor and deleting wakes up after a successor took over: what the successor wrote is above the floor, and
+  // it is not this call's to delete.
+  const deletedObjects = await sweepMaskedCopies(context.durable, key, record.forgottenAtEpoch)
+  rmSync(root, { recursive: true, force: true })
   await context.lease.release()
   return { deletedObjects, floor: record.forgottenAtEpoch }
 }
