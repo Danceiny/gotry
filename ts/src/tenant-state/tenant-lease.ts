@@ -49,6 +49,8 @@ export class TenantLease {
   readonly key: string
   readonly replicaId: string
   readonly epoch: number
+  /** Durable copies of epochs up to this one are dead; fixed for the whole tenure, because only the holder can raise it. */
+  readonly forgottenAtEpoch: number
   private readonly store: LeaseStore
   private readonly clock: MonotonicClock
   private readonly ttlMs: number
@@ -61,6 +63,7 @@ export class TenantLease {
     this.key = options.key
     this.replicaId = options.replicaId
     this.epoch = record.epoch
+    this.forgottenAtEpoch = record.forgottenAtEpoch
     this.store = options.store
     this.clock = clock
     this.ttlMs = options.ttlMs

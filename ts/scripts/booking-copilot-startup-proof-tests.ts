@@ -98,7 +98,7 @@ const started = await startBookingCopilotFromEnvironment(trustedEnv, {
   ingressBinding: trustedBinding,
   principal: { subject: 'startup-bff', scope: 'booking:read' },
   async startServer(options) {
-    serverApiKey = options.apiKey
+    serverApiKey = options.apiKey ?? ''
     serverArtifactId = options.artifactId ?? ''
     assert.equal(options.ingressMode, 'bff-ingress-binding')
     return {

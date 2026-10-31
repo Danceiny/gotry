@@ -61,3 +61,52 @@ export class InvalidTenantIdError extends TenantStateError {
     super('GOTRY_TENANT_ID_INVALID', message)
   }
 }
+
+/** The durable store failed or could not be reached. Replication lag grows; a stricter durability mode would refuse writes. */
+export class DurableStoreUnavailableError extends TenantStateError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super('GOTRY_TENANT_DURABLE_STORE_UNAVAILABLE', message, options)
+  }
+}
+
+/** A durable copy exists but cannot be trusted: a failed checksum, integrity, tenant or fold check. */
+export class RestoreVerificationError extends TenantStateError {
+  readonly skipped: readonly string[]
+
+  constructor(message: string, skipped: readonly string[] = []) {
+    super('GOTRY_TENANT_RESTORE_INVALID', message)
+    this.skipped = skipped
+  }
+}
+
+/** Something else wrote into this holder's own epoch prefix: the single-writer invariant is broken. */
+export class CopyConflictError extends TenantStateError {
+  constructor(message: string) {
+    super('GOTRY_TENANT_COPY_CONFLICT', message)
+  }
+}
+
+/** The tenant is being handed off: in-flight work finishes, new work is refused and should be retried on the next owner. */
+export class TenantDrainingError extends TenantStateError {
+  constructor(key: string) {
+    super('GOTRY_TENANT_DRAINING', `tenant ${key} is being handed off`)
+  }
+}
+
+/** The router was closed; no tenant can be opened through it any more. */
+export class RouterClosedError extends TenantStateError {
+  constructor() {
+    super('GOTRY_TENANT_ROUTER_CLOSED', 'the tenant router is closed')
+  }
+}
+
+/**
+ * This replica already holds as many tenants as it was configured to. Each open tenant costs file descriptors (about
+ * three) and memory; past the process's descriptor limit every tenant, and every socket, would start failing at once.
+ * The request is refused before the lease or any file is touched and belongs on another replica or later.
+ */
+export class ReplicaAtCapacityError extends TenantStateError {
+  constructor(readonly limit: number) {
+    super('GOTRY_TENANT_REPLICA_AT_CAPACITY', 'this replica is serving as many tenants as it is configured to')
+  }
+}

@@ -47,8 +47,9 @@ import {
   type LeaseRecord,
   type LeaseStore,
 } from '../src/tenant-state/lease-store.ts'
-import { TenantLease, type MonotonicClock } from '../src/tenant-state/tenant-lease.ts'
+import { TenantLease } from '../src/tenant-state/tenant-lease.ts'
 import { runLeaseStoreConformance } from './tenant-state-lease-conformance.ts'
+import { ManualClock } from './tenant-state-test-kit.ts'
 
 const TS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WORKER = join(TS_DIR, 'scripts', 'tenant-state-lease-worker.ts')
@@ -58,22 +59,6 @@ async function check(label: string, assertion: () => void | Promise<void>): Prom
   await assertion()
   passed += 1
   console.log(`  ok - ${label}`)
-}
-
-class ManualClock implements MonotonicClock {
-  private now: number
-
-  constructor(start: number) {
-    this.now = start
-  }
-
-  nowMs(): number {
-    return this.now
-  }
-
-  advance(ms: number): void {
-    this.now += ms
-  }
 }
 
 /** A lease store whose network can be cut, and whose acquire can be made slow. */

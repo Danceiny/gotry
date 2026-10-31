@@ -62,6 +62,37 @@ export function deriveLedgerTenantId(organizationKey: Uint8Array, issuer: string
   return `t-${mac.slice(0, 32)}`
 }
 
+const CACHE_PARTITION_CONTEXT = Buffer.from('gotry/prompt-cache-partition/v1', 'utf8')
+const CACHE_PARTITION_LABEL = /^pc-[0-9a-f]{32}$/
+
+export function assertPromptCachePartition(value: unknown): string {
+  if (typeof value !== 'string' || !CACHE_PARTITION_LABEL.test(value)) {
+    throw new InvalidTenantIdError('prompt cache partition must be "pc-" followed by 32 lowercase hex digits')
+  }
+  return value
+}
+
+/**
+ * `pc-` + the first 128 bits of HMAC-SHA256(K_org, context ‖ 0x00 ‖ ledger tenant id).
+ *
+ * The label that goes into every planner prompt of one tenant, ahead of any tenant-controlled or tenant-derived byte
+ * (docs/rfc/aaas-rfc.md §4.8, threat S-16). A provider caches by prompt prefix; with this label placed after the shared
+ * instructions, the longest prefix two tenants can share ends before it. It is derived under the organization key with
+ * its own context string, so it is stable for one tenant on every replica (the tenant's own cache stays warm across a
+ * handoff), cannot be computed by anyone without the key, and is not the ledger tenant id the metrics and paths use.
+ */
+export function derivePromptCachePartition(organizationKey: Uint8Array, ledgerTenantId: string): string {
+  if (!(organizationKey instanceof Uint8Array) || organizationKey.byteLength < MIN_ORGANIZATION_KEY_BYTES) {
+    throw new InvalidTenantIdError(`organization key must be at least ${MIN_ORGANIZATION_KEY_BYTES} bytes`)
+  }
+  const mac = createHmac('sha256', organizationKey)
+    .update(CACHE_PARTITION_CONTEXT)
+    .update(CLAIM_SEPARATOR)
+    .update(assertLedgerTenantId(ledgerTenantId))
+    .digest('hex')
+  return `pc-${mac.slice(0, 32)}`
+}
+
 /** The lease key of one tenant: `<organization>/<ledger tenant>`. */
 export function leaseKeyFor(organizationId: string, ledgerTenantId: string): string {
   return `${assertOrganizationId(organizationId)}/${assertLedgerTenantId(ledgerTenantId)}`

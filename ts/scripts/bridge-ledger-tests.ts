@@ -44,6 +44,9 @@ import {
 } from '../capabilities/session/bridge-ledger.ts'
 import { startSessionSearchModule } from '../src/backend/modules/session-search.ts'
 
+// 账本方法的组织参数必填(漏传是编译错误):本套件验证的是缺省的单车道,统一传 local
+const LOCAL = 'local'
+
 let passed = 0
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
   await assertion()
@@ -211,7 +214,7 @@ async function main(): Promise<void> {
       assert.equal(row?.claimed_by_client, CLAIM_CLIENT)
       assert.equal(row?.attempts, 1)
       assert.ok(row?.claimed_at !== null, 'claimed_at 落账')
-      const pacing = storeC.pacingOf('dida-portal')
+      const pacing = storeC.pacingOf(LOCAL, 'dida-portal')
       assert.ok(pacing && pacing.cooldownUntil > Date.now(), '导航类作业领取即记节律冷却')
       // 正常善果回包 → resolved + result 保留
       const r = await postResult(server.port, polled.job!.jobId, { ok: true, kind: 'search', body: '{"rates":[]}', title: 'ok' }, { clientId: CLAIM_CLIENT })
@@ -244,7 +247,7 @@ async function main(): Promise<void> {
       const row = storeC.getJob(polled.job!.jobId)
       assert.equal(row?.status, 'unresolved', '曾被领取的超时终态 = unresolved')
       assert.ok(row?.result_json?.includes('timeout'), '超时结算留 timeout 备注')
-      const pacing = storeC.pacingOf('train-12306')
+      const pacing = storeC.pacingOf(LOCAL, 'train-12306')
       assert.ok(pacing && pacing.cooldownUntil >= Date.now() + BRIDGE_SITE_COOLDOWN_MS - 2_000, '超时结算把站点冷却推满')
     } finally {
       await server.close()
@@ -255,7 +258,7 @@ async function main(): Promise<void> {
     const server = await serveQueue(queueC)
     try {
       const pending = queueC.submit({ kind: 'search', site: 'ctrip-hotel', url: 'https://hotels.ctrip.com/hotels/list' }, { timeoutMs: 300, extensionWaitMs: 30_000 })
-      const pacingAtSubmit = storeC.pacingOf('ctrip-hotel')
+      const pacingAtSubmit = storeC.pacingOf(LOCAL, 'ctrip-hotel')
       assert.ok(pacingAtSubmit && pacingAtSubmit.cooldownUntil > Date.now(), '导航类作业提交即记节律(与 sessionDidaSearch 内存闸同语义:提交即承诺一次导航)')
       const outcome = await pending
       assert.equal(outcome.ok, false)
@@ -268,7 +271,7 @@ async function main(): Promise<void> {
         raw.close()
       }
       assert.equal(voided.length, 1, '未被领取的超时作业 = void')
-      const pacingAfter = storeC.pacingOf('ctrip-hotel')
+      const pacingAfter = storeC.pacingOf(LOCAL, 'ctrip-hotel')
       assert.equal(pacingAfter?.cooldownUntil, pacingAtSubmit?.cooldownUntil, '从未被领取的超时结算不追加冷却(站点未被打)')
     } finally {
       await server.close()
@@ -305,12 +308,12 @@ async function main(): Promise<void> {
     let server: { port: number; close: () => Promise<void> } | undefined
     try {
       // 直接落账模拟上一进程崩溃后的持久状态(不经过队列 close——close 会把未领取作业落 void)
-      storeE.insertQueuedJob({ jobId: 'rec-queued-fresh', kind: 'search', site: 'dida-portal', url: 'https://portal.dida.com/find' }, t0 + 60_000)
-      storeE.insertQueuedJob({ jobId: 'rec-queued-stale', kind: 'search', site: 'dida-portal', url: 'https://portal.dida.com/find' }, t0 - 1_000)
-      storeE.insertQueuedJob({ jobId: 'rec-claimed-live', kind: 'search', site: 'ctrip-flight', url: 'https://flights.ctrip.com/online/list' }, t0 + 60_000)
-      storeE.markClaimed('rec-claimed-live', { origin: EXTENSION_ORIGIN, clientId: LIVE_CLIENT })
-      storeE.insertQueuedJob({ jobId: 'rec-claimed-dead', kind: 'search', site: 'ctrip-hotel', url: 'https://hotels.ctrip.com/hotels/list' }, t0 - 1_000)
-      storeE.markClaimed('rec-claimed-dead', { origin: EXTENSION_ORIGIN })
+      storeE.insertQueuedJob(LOCAL, { jobId: 'rec-queued-fresh', kind: 'search', site: 'dida-portal', url: 'https://portal.dida.com/find' }, t0 + 60_000)
+      storeE.insertQueuedJob(LOCAL, { jobId: 'rec-queued-stale', kind: 'search', site: 'dida-portal', url: 'https://portal.dida.com/find' }, t0 - 1_000)
+      storeE.insertQueuedJob(LOCAL, { jobId: 'rec-claimed-live', kind: 'search', site: 'ctrip-flight', url: 'https://flights.ctrip.com/online/list' }, t0 + 60_000)
+      storeE.markClaimed(LOCAL, 'rec-claimed-live', { origin: EXTENSION_ORIGIN, clientId: LIVE_CLIENT })
+      storeE.insertQueuedJob(LOCAL, { jobId: 'rec-claimed-dead', kind: 'search', site: 'ctrip-hotel', url: 'https://hotels.ctrip.com/hotels/list' }, t0 - 1_000)
+      storeE.markClaimed(LOCAL, 'rec-claimed-dead', { origin: EXTENSION_ORIGIN })
 
       q = createBridgeJobQueue({ store: storeE })
       server = await serveQueue(q)
@@ -322,7 +325,7 @@ async function main(): Promise<void> {
       assert.equal(summary.settledUnresolved, 1)
       assert.equal(storeE.getJob('rec-queued-stale')?.status, 'void', '未被领取即过期 → void,不再派发(零花费)')
       assert.equal(storeE.getJob('rec-claimed-dead')?.status, 'unresolved', '领取后超时 → unresolved')
-      assert.ok(storeE.pacingOf('ctrip-hotel') && storeE.pacingOf('ctrip-hotel')!.cooldownUntil > Date.now(), '超时结算记节律冷却')
+      assert.ok(storeE.pacingOf(LOCAL, 'ctrip-hotel') && storeE.pacingOf(LOCAL, 'ctrip-hotel')!.cooldownUntil > Date.now(), '超时结算记节律冷却')
       // 重排作业可被新进程的扩展领取并善果落账
       const polled = await pollJobs(server.port, { clientId: LIVE_CLIENT, capabilities: ['dida-portal'] })
       assert.equal(polled.job?.jobId, 'rec-queued-fresh', '恢复的 queued 作业重排进队列')
@@ -346,13 +349,13 @@ async function main(): Promise<void> {
     const server = await serveQueue(queueC)
     try {
       const CLIENT = randomUUID()
-      const pacingBefore = storeC.pacingOf('dida-portal')
+      const pacingBefore = storeC.pacingOf(LOCAL, 'dida-portal')
       const first = queueC.submit({ kind: 'cookie-names', site: 'dida-portal', timeoutMs: 3_000 }, { timeoutMs: 3_000 })
       const polled = await pollJobs(server.port, { clientId: CLIENT, capabilities: ['dida-portal'] })
       assert.ok(polled.job, 'cookie-names 作业应被领取')
       await postResult(server.port, polled.job!.jobId, { ok: true, kind: 'cookie-names', names: ['dida_session_sig'] }, { clientId: CLIENT })
       assert.equal((await first).ok, true)
-      const row1 = storeC.getClient(CLIENT)
+      const row1 = storeC.getClient(LOCAL, CLIENT)
       assert.ok(row1, '轮询即注册客户端')
       assert.equal(row1?.origin, EXTENSION_ORIGIN)
       assert.deepEqual(JSON.parse(row1?.capabilities_json ?? '[]'), ['dida-portal'])
@@ -364,11 +367,11 @@ async function main(): Promise<void> {
       assert.ok(polled2.job, '第二次轮询仍可领取')
       await postResult(server.port, polled2.job!.jobId, { ok: true, kind: 'cookie-names', names: [] }, { clientId: CLIENT })
       assert.equal((await second).ok, true)
-      const row2 = storeC.getClient(CLIENT)
+      const row2 = storeC.getClient(LOCAL, CLIENT)
       assert.deepEqual(JSON.parse(row2?.capabilities_json ?? '[]'), ['dida-portal', 'train-12306'], 'upsert 覆盖能力清单')
       assert.ok((row2?.last_seen_at ?? 0) >= seen1, 'last_seen_at 单调刷新')
       assert.deepEqual(JSON.parse(row2?.login_sites_json ?? '[]'), ['dida-portal'], 'upsert 不回退 login_sites')
-      const pacingAfter = storeC.pacingOf('dida-portal')
+      const pacingAfter = storeC.pacingOf(LOCAL, 'dida-portal')
       assert.deepEqual(pacingAfter, pacingBefore, 'cookie-names 非导航作业,不推动节律')
     } finally {
       await server.close()
@@ -385,8 +388,8 @@ async function main(): Promise<void> {
     try {
       // 预置一条上一进程遗留的已超时 claimed 作业:模块启动即应结算 unresolved
       const seed = openBridgeLedgerStore(rootG)
-      seed.insertQueuedJob({ jobId: 'mount-recover-dead', kind: 'search', site: 'dida-portal', url: 'https://portal.dida.com/find' }, Date.now() - 1_000)
-      seed.markClaimed('mount-recover-dead', { origin: EXTENSION_ORIGIN })
+      seed.insertQueuedJob(LOCAL, { jobId: 'mount-recover-dead', kind: 'search', site: 'dida-portal', url: 'https://portal.dida.com/find' }, Date.now() - 1_000)
+      seed.markClaimed(LOCAL, 'mount-recover-dead', { origin: EXTENSION_ORIGIN })
       seed.close()
 
       const mod = startSessionSearchModule({
@@ -403,7 +406,7 @@ async function main(): Promise<void> {
           // recoverOnBoot 已在模块启动路径跑过:遗留 claimed 超时作业被结算
           assert.equal(probe.getJob('mount-recover-dead')?.status, 'unresolved', '启动即恢复结算遗留超时作业')
           // 账本节律读判定:冷却内 429(带 retry-after)
-          probe.applyCooldown('dida-portal')
+          probe.applyCooldown(LOCAL, 'dida-portal')
           const hot = await driveModuleSearch(mod, 'Bearer ledger-test-key')
           assert.equal(hot.statusCode, 429, '账本冷却内检索被节律闸拒绝')
           assert.ok(String(hot.headers['retry-after'] ?? '').length > 0, '429 携带 retry-after')
