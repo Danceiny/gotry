@@ -14,7 +14,7 @@
 - An idle open tenant costs about **three file descriptors** and **a quarter of a MiB** of resident memory, and opens in about 9 ms, flat from 1 to 500 tenants. The first ceiling on a replica is the **descriptor limit**, not memory: at a soft limit of 1024 descriptors it is a few hundred tenants. `maxOpenTenants` turns that cliff into a typed refusal.
 - Taking a tenant over from its durable copy is linear in the ledger: about **4 ms per MiB** to restore and **7 ms per MiB** to publish the final snapshot, on local disk. A 100 MiB ledger took 0.4 s to take over.
 - A booted, idle planner process tree is about **200 MiB** and boots in 0.5 to 1 s. Concurrent turns, not tenants, are what use memory: eight turns at once is about 1.6 GiB, and up to twice that for the first second of each turn while the warm-up tree runs.
-- Handing 500 open tenants back gracefully took **11 s** here. A rolling deploy of a full replica takes at least that long.
+- Handing 500 open tenants back gracefully took **11 to 13 s** here (11 s one tenant at a time, 13 s with the router's eight at a time). A rolling deploy of a full replica takes at least that long.
 - Nothing grew faster than linearly across the steps measured, so these numbers do not by themselves trigger the RFC's fallback to a shared database. They do not replace probing a real node (§4).
 
 ## 1. Method
@@ -40,7 +40,7 @@ The run reported here: 2026-10-30, `v26.9.0`, `darwin/arm64`, Apple M4 Pro with 
 | 250 | 163.2 | 61.4 | 752 | 8.5 / 12.0 |
 | 500 | 235.0 | 133.2 | 1,502 | 8.6 / 12.0 |
 
-Per tenant that is 0.27 MiB and 3.0 descriptors (a database file, its write-ahead log and its shared-memory file). Closing all 500 gracefully took 11.3 s, which is 23 ms per tenant, one after another, with every tenant flushed. Two descriptors remained above the starting baseline afterwards, so closing a tenant gives its handles back.
+Per tenant that is 0.27 MiB and 3.0 descriptors (a database file, its write-ahead log and its shared-memory file). Closing all 500 gracefully took 11.3 s one tenant after another (23 ms each), and 13.2 s with the router's eight at a time on a busier machine. The work is building snapshots inside one process, so doing several at once is not faster; it limits what one tenant that cannot finish can hold back. Every tenant was flushed. Two descriptors remained above the starting baseline afterwards, so closing a tenant gives its handles back.
 
 ### 2.2 Taking a tenant over
 
@@ -68,7 +68,7 @@ This is arithmetic on the table above, not a forecast.
 
 - **Descriptors set the first limit.** A process often starts with a soft limit of 1024. With 256 kept for sockets, logs and the planner pipes, that holds `(1024 − 256) / 3 = 256` tenants. At 65,536 descriptors the same arithmetic gives about 21,000. Raising the limit is a deployment setting; `maxOpenTenants` is what keeps a replica from reaching it, because past the limit every tenant and every socket on the replica fails together.
 - **Memory for idle tenants is small.** 10,000 idle tenants would be about 2.6 GiB. Memory is used by turns: with about 200 MiB per booted planner, the global turn cap sets the planner memory of a replica (`globalConcurrentTurns × 200 MiB`, twice that during the first second of a turn).
-- **A rolling deploy is not instant.** Draining a replica at 500 tenants is at least 11 s here, before any network. A deploy plan has to allow for the drain time of a full replica.
+- **A rolling deploy is not instant.** Draining a replica at 500 tenants is at least 11 s here (13 s with eight at a time), before any network, and up to `drainTimeoutMs` more for each tenant with a call that never returns. A deploy plan has to allow for the drain time of a full replica.
 - **Takeover time is a ledger-size question.** A tenant that has not been busy takes over in tens of milliseconds. The turn that triggers a takeover waits for it.
 - **The fallback trigger.** Trigger 4 of the RFC compares tenant count times per-file overhead with the replica budget. With the per-tenant cost above, the budget that binds first is descriptors, which is configuration. These numbers do not argue for the shared-database fallback.
 

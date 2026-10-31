@@ -102,5 +102,14 @@ export async function runDurableStoreConformance(store: DurableStore, namespace:
     await expectRangeError(() => store.deletePrefix(''), 'delete of the empty prefix')
   })
 
+  await check('delete takes whole segments only: a prefix that stops inside a name would also take its neighbours', async (prefix) => {
+    await store.putIfAbsent(`${prefix}/org/t1/base.json`, Buffer.from('1'))
+    await store.putIfAbsent(`${prefix}/org2/t9/base.json`, Buffer.from('2'))
+    await expectRangeError(() => store.deletePrefix(`${prefix}/org`), 'delete of a prefix that ends inside a segment')
+    expect((await store.list(`${prefix}/org2/`)).length === 1, 'the neighbour that shares the spelling is untouched')
+    expect(await store.deletePrefix(`${prefix}/org/`) === 1, 'the whole segment is deleted')
+    expect((await store.list(`${prefix}/org2/`)).length === 1, 'and the neighbour is still there')
+  })
+
   return failures
 }

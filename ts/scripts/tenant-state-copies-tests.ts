@@ -92,6 +92,20 @@ class OverwritingDurableStore implements DurableStore {
 }
 
 /** Breaks another rule: the partial last segment of a prefix is ignored, so a listing returns the whole directory. */
+/** A store whose delete treats the prefix as raw text, so `acme` would take `acme2` too. */
+class RawPrefixDeleteDurableStore implements DurableStore {
+  constructor(private readonly inner: DurableStore, private readonly directory: string) {}
+
+  putIfAbsent(key: string, bytes: Uint8Array): Promise<boolean> { return this.inner.putIfAbsent(key, bytes) }
+  get(key: string): Promise<Uint8Array | null> { return this.inner.get(key) }
+  list(prefix: string): Promise<string[]> { return this.inner.list(prefix) }
+  async deletePrefix(prefix: string): Promise<number> {
+    const keys = await this.inner.list(prefix)
+    for (const key of keys) rmSync(join(this.directory, ...key.split('/')), { force: true })
+    return keys.length
+  }
+}
+
 class DirectoryOnlyListDurableStore implements DurableStore {
   private readonly inner: DurableStore
 
@@ -241,6 +255,8 @@ try {
     assert.ok(names.includes('sixteen concurrent puts of one key create it exactly once with intact bytes'), names.join(' | '))
     const directoryOnly = await runDurableStoreConformance(new DirectoryOnlyListDurableStore(new DirDurableStore(join(root, 'broken-listing'))), 'listing')
     assert.ok(directoryOnly.map(failure => failure.check).includes('list returns sorted keys under a prefix, including a partial last segment'), JSON.stringify(directoryOnly))
+    const rawDelete = await runDurableStoreConformance(new RawPrefixDeleteDurableStore(new DirDurableStore(join(root, 'broken-delete')), join(root, 'broken-delete')), 'rawdelete')
+    assert.ok(rawDelete.map(failure => failure.check).includes('delete takes whole segments only: a prefix that stops inside a name would also take its neighbours'), JSON.stringify(rawDelete))
   })
 
   // ---- S: publishing ------------------------------------------------------------------------

@@ -51,6 +51,10 @@ export class FaultyDurableStore implements DurableStore {
   conflictNextPut: RegExp | null = null
   /** Runs once, just before the next listing is answered: a way to land another replica's upload inside a restore. */
   beforeNextList: (() => Promise<void>) | null = null
+  /** While set, every put whose key matches waits this long first: an object store that is slow to take an image. */
+  slowPut: { readonly match: RegExp; readonly ms: number } | null = null
+  /** Fails the next delete once, to see what a failed sweep does to an open. */
+  failNextDelete = false
   private readonly inner: DurableStore
 
   constructor(inner: DurableStore) {
@@ -63,6 +67,8 @@ export class FaultyDurableStore implements DurableStore {
 
   async putIfAbsent(key: string, bytes: Uint8Array): Promise<boolean> {
     this.gate()
+    const slow = this.slowPut
+    if (slow?.match.test(key)) await new Promise<void>((resolve) => { setTimeout(resolve, slow.ms) })
     if (this.failNextPut?.test(key)) {
       this.failNextPut = null
       throw new DurableStoreUnavailableError(`injected failure for ${key}`)
@@ -91,6 +97,10 @@ export class FaultyDurableStore implements DurableStore {
 
   async deletePrefix(prefix: string): Promise<number> {
     this.gate()
+    if (this.failNextDelete) {
+      this.failNextDelete = false
+      throw new DurableStoreUnavailableError(`injected delete failure for ${prefix}`)
+    }
     return this.inner.deletePrefix(prefix)
   }
 }

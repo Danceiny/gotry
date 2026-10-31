@@ -23,12 +23,13 @@ import {
   forgetTenant,
   publishSnapshot,
   restoreTenantLedger,
+  sweepMaskedCopies,
   type EpochCopyContext,
   type RestoreResult,
   type SnapshotManifest,
   type SnapshotRef,
 } from './epoch-copies.ts'
-import { FencedError, LeaseLostError, ReplicaAtCapacityError, RouterClosedError, TenantDrainingError } from './errors.ts'
+import { DrainTimeoutError, FencedError, LeaseLostError, ReplicaAtCapacityError, RouterClosedError, TenantDrainingError } from './errors.ts'
 import { leaseKeyFor, tenantRootFor } from './ids.ts'
 import type { LeaseStore } from './lease-store.ts'
 import { systemMonotonicClock, TenantLease, type MonotonicClock } from './tenant-lease.ts'
@@ -102,6 +103,8 @@ function guardedDatabase(db: Database.Database, assertHeld: Gate): Database.Data
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target)
       if (typeof value !== 'function') return value
+      // The router owns the connection its own writes, its snapshots and its handoff depend on; a consumer cannot close it.
+      if (property === 'close') return () => guarded
       return (...args: unknown[]) => {
         assertHeld()
         const result = Reflect.apply(value as Callable, target, args)
@@ -117,7 +120,10 @@ function guardedDatabase(db: Database.Database, assertHeld: Gate): Database.Data
   return guarded
 }
 
-/** The ledger as a handle exposes it. The router owns its lifecycle, so `close` does nothing here. */
+/**
+ * The ledger as a handle exposes it. The router owns its lifecycle, so `close` does nothing here, and the view is
+ * read-only: nothing a consumer does to it changes the ledger the router holds.
+ */
 function guardedLedger(ledger: StateLedger, assertHeld: Gate): StateLedger {
   return new Proxy(ledger, {
     get(target, property) {
@@ -130,6 +136,18 @@ function guardedLedger(ledger: StateLedger, assertHeld: Gate): StateLedger {
         return Reflect.apply(value as Callable, target, args)
       }
     },
+    // `Object.getOwnPropertyDescriptor(ledger, 'db').value` is a second way to the database that `get` does not cover.
+    getOwnPropertyDescriptor(target, property) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, property)
+      if (property === 'db' && descriptor && 'value' in descriptor) return { ...descriptor, value: guardedDatabase(descriptor.value as Database.Database, assertHeld) }
+      return descriptor
+    },
+    // An assignment to a property that exists ends in defineProperty, so refusing that and delete is what makes the view read-only;
+    // the prototype and the extensibility are the rest of what a consumer could change on the ledger the router holds.
+    defineProperty: () => false,
+    deleteProperty: () => false,
+    setPrototypeOf: () => false,
+    preventExtensions: () => false,
   })
 }
 
@@ -144,6 +162,7 @@ export type RouterEvent =
   | { readonly type: 'snapshot'; readonly key: string; readonly epoch: number; readonly seq: number }
   | { readonly type: 'snapshot_failed'; readonly key: string; readonly epoch: number; readonly code: string }
   | { readonly type: 'lost'; readonly key: string; readonly epoch: number }
+  | { readonly type: 'drain_timeout'; readonly key: string; readonly epoch: number; readonly inFlight: number }
   | { readonly type: 'released'; readonly key: string; readonly epoch: number; readonly flushed: boolean }
 
 export interface TenantRouterOptions {
@@ -167,6 +186,15 @@ export interface TenantRouterOptions {
    * before, there is no cap and the limit is whatever the process runs out of first.
    */
   readonly maxOpenTenants?: number
+  /**
+   * The longest a handoff waits for calls that were already running (`runAsync`) to finish. The lease is renewed through the
+   * drain, so a call that never returns would otherwise hold the tenant on this replica for ever and keep `close()` waiting. When
+   * it passes, `handoff()` rejects with `DrainTimeoutError`, the tenant serves again and a `drain_timeout` event says so. Set it
+   * below the termination grace period of the deployment. Default 120 s.
+   */
+  readonly drainTimeoutMs?: number
+  /** Tenants `close()` hands off at the same time, so that one stuck tenant does not hold the ones behind it. Default 8. */
+  readonly closeConcurrency?: number
   readonly onEvent?: (event: RouterEvent) => void
 }
 
@@ -202,13 +230,23 @@ interface HandleDeps {
   readonly autoRenew: boolean
   readonly renewEveryMs: number
   readonly snapshotEveryMs: number
+  readonly drainTimeoutMs: number
   emit(event: RouterEvent): void
   detach(handle: TenantHandle): void
+  /** Work the router waits for when it closes, though the handle has left its table: a forget that is under way. */
+  retain(work: Promise<unknown>): void
 }
 
 /** A refused renewal, or a lease that was released or lost, ends the tenure for good. A merely expired local deadline does not: a renewal can resume it. */
 function endsTenure(error: unknown): boolean {
   return error instanceof LeaseLostError || (error instanceof FencedError && error.reason !== 'lease_expired_locally')
+}
+
+type TenantState = 'serving' | 'draining' | 'flushing' | 'forgetting' | 'closed'
+
+/** A promise in disguise: anything with a `then` function. */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (typeof value === 'object' || typeof value === 'function') && value !== null && typeof (value as { then?: unknown }).then === 'function'
 }
 
 class OpenTenant implements TenantHandle {
@@ -219,12 +257,15 @@ class OpenTenant implements TenantHandle {
   readonly ledger: StateLedger
   private readonly raw: StateLedger
   private readonly deps: HandleDeps
-  // `flushing` begins when the drain is over and the final image is about to be taken: from then on a write through
-  // the ledger could not be in the image, so the view is closed to every call until the tenant is closed or serving again.
-  private state: 'serving' | 'draining' | 'flushing' | 'closed' = 'serving'
+  // `draining`: new work is refused and what already runs may finish. `flushing` begins when the drain is over and the
+  // final image is about to be taken: from then on a write through the ledger could not be in the image, so the view is
+  // closed to every call until the tenant is closed or serving again. `forgetting`: the tenant is being deleted; nothing is
+  // served, but the lease is renewed until the deletion has handed it back.
+  private state: TenantState = 'serving'
   private inFlight = 0
-  private whenIdle: (() => void) | null = null
+  private readonly idleWaiters = new Set<() => void>()
   private renewTimer: ReturnType<typeof setTimeout> | null = null
+  private renewTicking = false
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null
   private snapshotTail: Promise<unknown> = Promise.resolve()
   private snapshotQueued = 0
@@ -249,6 +290,11 @@ class OpenTenant implements TenantHandle {
     return this.state === 'draining' || this.state === 'flushing'
   }
 
+  /** The state as it is now, for a check after an await: another call may have changed it, which a narrowed `this.state` or getter does not show. */
+  private phaseNow(): TenantState {
+    return this.state
+  }
+
   /** Called once by the router, after the handle is registered. */
   begin(): void {
     this.scheduleRenewal()
@@ -258,6 +304,12 @@ class OpenTenant implements TenantHandle {
   run<T>(work: (ledger: StateLedger) => T): T {
     this.assertServing()
     const result = work(this.ledger)
+    if (isThenable(result)) {
+      // The callback is already running, and what is left of it is outside the lease bracket and the drain. Nobody awaits
+      // the promise it returned, so its failure is taken here instead of becoming an unhandled rejection.
+      void Promise.resolve(result).catch(() => undefined)
+      throw new TypeError('TenantHandle.run takes a synchronous callback: use runAsync for work that awaits')
+    }
     this.deps.lease.assertHeld()
     return result
   }
@@ -271,7 +323,7 @@ class OpenTenant implements TenantHandle {
       return result
     } finally {
       this.inFlight -= 1
-      if (this.inFlight === 0) this.whenIdle?.()
+      if (this.inFlight === 0) this.wakeIdleWaiters()
     }
   }
 
@@ -294,22 +346,30 @@ class OpenTenant implements TenantHandle {
 
   async handoff(): Promise<void> {
     if (this.state === 'closed') return
-    if (this.isDraining()) throw new TenantDrainingError(this.deps.key)
-    this.state = 'draining'
+    if (this.state !== 'serving') throw new TenantDrainingError(this.deps.key)
+    this.setState('draining')
     // Only the periodic snapshots stop. The lease keeps being renewed through the drain and the final upload: both can
     // take longer than a lease, and a handoff that let it lapse would flush into a prefix no successor reads.
     this.stopSnapshotTimer()
     try {
-      await this.idle()
+      const drained = await this.drain()
+      if (drained === 'timeout') {
+        // The lease is renewed through the drain, so a call that never returns would hold the tenant here for ever.
+        this.emit({ type: 'drain_timeout', key: this.deps.key, epoch: this.epoch, inFlight: this.inFlight })
+        throw new DrainTimeoutError(this.deps.key, this.inFlight, this.deps.drainTimeoutMs)
+      }
       // Closed meanwhile (abandoned, forgotten, lease lost): there is nothing left to flush, and a closed handle stays closed.
-      if (this.state !== 'draining') throw new TenantDrainingError(this.deps.key)
-      this.state = 'flushing'
+      if (this.phaseNow() !== 'draining') throw new TenantDrainingError(this.deps.key)
+      this.setState('flushing')
       await this.snapshot()
+      // The same if it happened while the image was uploading. A forget deletes what this flush uploaded and needs the lease
+      // to finish; an abandon or a lost lease has ended the tenure. Releasing now, and reporting a flush, would be false.
+      if (this.phaseNow() !== 'flushing') throw new TenantDrainingError(this.deps.key)
     } catch (error) {
       // A flush that failed for want of a store leaves the tenant serving; one that failed because the lease is gone ends it.
       if (endsTenure(error)) this.markLost()
       else if (this.isDraining()) {
-        this.state = 'serving'
+        this.setState('serving')
         this.begin()
       }
       throw error
@@ -318,34 +378,63 @@ class OpenTenant implements TenantHandle {
   }
 
   async abandon(): Promise<void> {
-    if (this.state === 'closed') return
+    // A forget that is under way owns the end of the tenure: it hands the lease back itself.
+    if (this.state === 'closed' || this.state === 'forgetting') return
     this.stopTimers()
     await this.finish(false)
   }
 
   async forget(): Promise<{ readonly deletedObjects: number; readonly floor: number }> {
     this.deps.lease.assertHeld()
-    this.stopTimers()
-    this.state = 'closed'
+    // Closed with the lease still held is an abandon on its way out: it ends the tenure, and a forget on top of it would run
+    // the deletion over a tenure that is already over and report a second release.
+    if (this.state === 'forgetting' || this.state === 'closed') throw new TenantDrainingError(this.deps.key)
+    // Nothing is served from here on, but the lease keeps being renewed: waiting for an upload under way can take longer than
+    // the lease, and a forget that let it lapse could no longer delete.
+    this.stopSnapshotTimer()
+    this.setState('forgetting')
     this.closeLedger()
     this.deps.detach(this)
-    // An upload already under way would land after the deletion and leave the tenant's image in the store, where nothing
-    // would look for it again. Snapshots queued behind it refuse to start now that the handle is closed.
-    await this.snapshotTail.catch(() => undefined)
-    const outcome = await forgetTenant(this.deps.context)
-    this.emit({ type: 'released', key: this.deps.key, epoch: this.epoch, flushed: false })
-    return outcome
+    const work = this.completeForget()
+    // The handle has left the router's table, but the deletion is not over: closing the router waits for it.
+    this.deps.retain(work.then(() => undefined, () => undefined))
+    return work
+  }
+
+  private async completeForget(): Promise<{ readonly deletedObjects: number; readonly floor: number }> {
+    try {
+      // An upload already under way would land after the deletion and leave the tenant's image in the store, where nothing
+      // would look for it again. Snapshots queued behind it refuse to start now that the tenant is being forgotten.
+      await this.snapshotTail.catch(() => undefined)
+      const outcome = await forgetTenant(this.deps.context)
+      this.emit({ type: 'released', key: this.deps.key, epoch: this.epoch, flushed: false })
+      return outcome
+    } finally {
+      this.setState('closed')
+      this.stopTimers()
+    }
   }
 
   private assertServing(): void {
-    if (this.isDraining()) throw new TenantDrainingError(this.deps.key)
-    this.deps.lease.assertHeld()
+    if (this.state === 'serving') {
+      this.deps.lease.assertHeld()
+      return
+    }
+    // A lease that is gone says so first. With the lease still held, a handoff, a forget or an abandon is under way.
+    if (this.state === 'closed') this.deps.lease.assertHeld()
+    throw new TenantDrainingError(this.deps.key)
   }
 
-  /** The gate of the ledger a consumer holds: the lease, and a view that is closed once the final image is being taken. */
+  /** The gate of the ledger a consumer holds: the lease, and a view that is open only while the tenant is served or draining. */
   private assertViewUsable(): void {
     this.deps.lease.assertHeld()
-    if (this.state === 'flushing') throw new TenantDrainingError(this.deps.key)
+    if (this.state !== 'serving' && this.state !== 'draining') throw new TenantDrainingError(this.deps.key)
+  }
+
+  private setState(next: TenantState): void {
+    this.state = next
+    // Whoever waits for the in-flight work to end is also waiting for the tenant to stay a tenant: closing it ends the wait.
+    if (next === 'closed' || next === 'forgetting') this.wakeIdleWaiters()
   }
 
   private emit(event: RouterEvent): void {
@@ -358,7 +447,7 @@ class OpenTenant implements TenantHandle {
 
   private async publishNow(): Promise<SnapshotManifest> {
     // A snapshot queued before a forget, an abandon or a lost lease must not start after it.
-    if (this.state === 'closed') throw new TenantDrainingError(this.deps.key)
+    if (this.state === 'closed' || this.state === 'forgetting') throw new TenantDrainingError(this.deps.key)
     try {
       const manifest = await publishSnapshot(this.deps.context)
       this.emit({ type: 'snapshot', key: this.deps.key, epoch: this.epoch, seq: manifest.seq })
@@ -369,9 +458,27 @@ class OpenTenant implements TenantHandle {
     }
   }
 
-  private idle(): Promise<void> {
-    if (this.inFlight === 0) return Promise.resolve()
-    return new Promise<void>((resolve) => { this.whenIdle = () => { this.whenIdle = null; resolve() } })
+  /**
+   * Waits until the calls that were running are done, the tenant is closed, or `drainTimeoutMs` has passed. The timer
+   * keeps the process alive on purpose: a graceful stop that gave up the moment nothing else was pending would exit
+   * without flushing.
+   */
+  private drain(): Promise<'idle' | 'closed' | 'timeout'> {
+    if (this.inFlight === 0) return Promise.resolve('idle')
+    return new Promise((resolve) => {
+      const end = (outcome: 'idle' | 'closed' | 'timeout'): void => {
+        clearTimeout(timer)
+        this.idleWaiters.delete(wake)
+        resolve(outcome)
+      }
+      const wake = (): void => end(this.state === 'draining' ? 'idle' : 'closed')
+      const timer = setTimeout(() => end('timeout'), this.deps.drainTimeoutMs)
+      this.idleWaiters.add(wake)
+    })
+  }
+
+  private wakeIdleWaiters(): void {
+    for (const wake of [...this.idleWaiters]) wake()
   }
 
   private closeLedger(): void {
@@ -383,11 +490,12 @@ class OpenTenant implements TenantHandle {
   }
 
   private async finish(flushed: boolean): Promise<void> {
-    this.state = 'closed'
+    this.setState('closed')
     this.stopTimers()
     this.closeLedger()
     // With everything flushed the durable copy is the authority, and this replica keeps no copy of the tenant's data. An
-    // abandoned tenant keeps its file: it may hold writes that exist nowhere else.
+    // abandoned tenant keeps its file: it may hold writes that exist nowhere else, until the next open of that tenant on this
+    // replica, whose restore replaces it.
     if (flushed) {
       try { discardLocalLedger(this.deps.context) } catch { /* a leftover file is discarded at the next restore */ }
     }
@@ -402,7 +510,7 @@ class OpenTenant implements TenantHandle {
   /** The lease is gone for good: stop serving, close the ledger, leave the stale local file to be replaced by the next restore. */
   private markLost(): void {
     if (this.state === 'closed') return
-    this.state = 'closed'
+    this.setState('closed')
     this.stopTimers()
     this.closeLedger()
     this.deps.detach(this)
@@ -421,19 +529,22 @@ class OpenTenant implements TenantHandle {
   }
 
   private scheduleRenewal(): void {
-    // Idempotent: a handoff that fails resumes service while its renewals never stopped, and must not start a second chain.
-    if (!this.deps.autoRenew || this.state === 'closed' || this.renewTimer) return
+    // Idempotent, and never beside a renewal that is under way: a handoff that fails resumes service while its renewals never
+    // stopped, and a second chain would double them for the rest of the tenure.
+    if (!this.deps.autoRenew || this.state === 'closed' || this.renewTimer || this.renewTicking) return
     this.renewTimer = setTimeout(() => { void this.renewTick() }, this.deps.renewEveryMs)
     this.renewTimer.unref()
   }
 
   private async renewTick(): Promise<void> {
     this.renewTimer = null
+    this.renewTicking = true
     try {
       await this.renew()
     } catch (error) {
-      if (this.state === 'closed') return
-      this.emit({ type: 'renew_failed', key: this.deps.key, epoch: this.epoch, code: (error as { code?: string }).code ?? 'unknown' })
+      if (this.state !== 'closed') this.emit({ type: 'renew_failed', key: this.deps.key, epoch: this.epoch, code: (error as { code?: string }).code ?? 'unknown' })
+    } finally {
+      this.renewTicking = false
     }
     this.scheduleRenewal()
   }
@@ -455,17 +566,23 @@ class OpenTenant implements TenantHandle {
 
 const DEFAULT_TTL_MS = 10_000
 const DEFAULT_MARGIN_MS = 2_000
+const DEFAULT_DRAIN_TIMEOUT_MS = 120_000
+const DEFAULT_CLOSE_CONCURRENCY = 8
+const MAX_TIMER_MS = 2_147_483_647
 
 export class TenantRouter {
   private readonly options: TenantRouterOptions
   private readonly clock: MonotonicClock
   private readonly handles = new Map<string, OpenTenant>()
   private readonly opening = new Map<string, Promise<TenantHandle>>()
+  private readonly forgets = new Set<Promise<unknown>>()
   private closed = false
 
   constructor(options: TenantRouterOptions) {
     if (typeof options.replicaId !== 'string' || options.replicaId.length === 0) throw new RangeError('replicaId must be a non-empty string')
     if (options.maxOpenTenants !== undefined && (!Number.isSafeInteger(options.maxOpenTenants) || options.maxOpenTenants < 1)) throw new RangeError('maxOpenTenants must be a positive integer')
+    if (options.drainTimeoutMs !== undefined && (!Number.isSafeInteger(options.drainTimeoutMs) || options.drainTimeoutMs < 1 || options.drainTimeoutMs > MAX_TIMER_MS)) throw new RangeError(`drainTimeoutMs must be an integer within [1, ${MAX_TIMER_MS}]`)
+    if (options.closeConcurrency !== undefined && (!Number.isSafeInteger(options.closeConcurrency) || options.closeConcurrency < 1)) throw new RangeError('closeConcurrency must be a positive integer')
     this.options = options
     this.clock = options.clock ?? systemMonotonicClock
   }
@@ -517,18 +634,45 @@ export class TenantRouter {
     return tenantRootFor(this.options.stateRoot, organization, ledgerTenant)
   }
 
-  /** Hands every open tenant off gracefully and refuses new ones. Resolves with the tenants whose flush failed. */
+  /**
+   * Hands every open tenant off gracefully and refuses new ones. Resolves with the tenants whose flush failed, among them
+   * those whose drain ran past `drainTimeoutMs`. Tenants are handed off several at a time, so one whose drain cannot finish
+   * holds back only the slot it sits in, and for no longer than that deadline. A forget that is under way is waited for, for
+   * as long as a drain may take. A durable store call that never returns is the binding's to time out (`DurableStore`).
+   */
   async close(): Promise<string[]> {
     this.closed = true
-    const failed: string[] = []
-    for (const [key, handle] of [...this.handles]) {
-      try {
-        await handle.handoff()
-      } catch {
-        failed.push(key)
+    const queue = [...this.handles]
+    const flushed: boolean[] = new Array<boolean>(queue.length).fill(false)
+    let next = 0
+    const lane = async (): Promise<void> => {
+      for (;;) {
+        const index = next
+        next += 1
+        if (index >= queue.length) return
+        try {
+          await queue[index]![1].handoff()
+          flushed[index] = true
+        } catch {
+          // Reported below, in the order the tenants were opened.
+        }
       }
     }
-    return failed
+    await Promise.all(Array.from({ length: Math.min(this.options.closeConcurrency ?? DEFAULT_CLOSE_CONCURRENCY, queue.length) }, lane))
+    await this.forgetsUnderWay()
+    return queue.filter((_, index) => !flushed[index]).map(([key]) => key)
+  }
+
+  /** Waits for the forgets that have left the table but are not over, but not longer than a drain may take. */
+  private async forgetsUnderWay(): Promise<void> {
+    if (this.forgets.size === 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>((resolve) => { timer = setTimeout(resolve, this.options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS) })
+    try {
+      await Promise.race([Promise.allSettled([...this.forgets]), deadline])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private async open(organization: string, ledgerTenant: string, key: string): Promise<TenantHandle> {
@@ -581,11 +725,19 @@ export class TenantRouter {
       autoRenew: options.autoRenew ?? true,
       renewEveryMs: options.renewEveryMs ?? Math.max(50, Math.floor(ttlMs / 3)),
       snapshotEveryMs: options.snapshotEveryMs ?? 0,
+      drainTimeoutMs: options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS,
       emit,
       detach: (gone) => { if (this.handles.get(key) === gone) this.handles.delete(key) },
+      retain: (work) => {
+        this.forgets.add(work)
+        void work.then(() => { this.forgets.delete(work) })
+      },
     })
     this.handles.set(key, handle)
     handle.begin()
+    // What a superseded owner uploaded after this tenant was forgotten is dead whoever wrote it. It is deleted here, off the
+    // open path, so a slow store cannot use up the lease before the first renewal; a failure is tried again at the next open.
+    if (lease.forgottenAtEpoch > 0) void sweepMaskedCopies(options.durable, key, lease.forgottenAtEpoch).catch(() => undefined)
     return handle
   }
 }

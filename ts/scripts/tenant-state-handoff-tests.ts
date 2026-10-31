@@ -8,13 +8,18 @@
  * guard, a forgotten tenant's image survive, or a throwing observer hold a lease.
  *
  * Offline and deterministic: a directory stands in for the object store, fake clocks move time by hand, and a slow
- * upload is a hook that moves the clocks while the upload is "in flight". Two checks use real timers (the lease must
- * be renewed while a handoff drains). The founder's runtime state root is never opened.
+ * upload is a hook that moves the clocks while the upload is "in flight". A few checks use real timers (the lease must be
+ * renewed while a handoff drains, a renewal chain, a drain deadline), each with room to spare on a busy machine. The founder's runtime state root is never opened.
  *
  *   H  handoff: writes after the final image are refused, the lease outlives the drain and the upload, a flush whose
  *      lease lapsed is reported as failed, a failed flush resumes service, an abandon stays abandoned
+ *   D  the drain is bounded, a stuck tenant holds nobody else, and a tenant that is closed meanwhile settles its handoff
+ *   R  one renewal chain, however a failed handoff and a slow lease store interleave
+ *   T  run() takes a synchronous callback
  *   V  the guarded view hands out nothing raw
- *   F  forget: an upload under way cannot leave the tenant's image behind
+ *   F  forget: an upload under way cannot leave the tenant's image behind, and forget wins against a handoff
+ *   S  copies of a dead epoch are deleted when the tenant is next opened
+ *   P  a destructive call takes only the tenant's own paths
  *   O  an observer that throws cannot hold a lease
  *   L  a replica keeps no copy of a tenant it handed off with everything flushed
  *
@@ -22,16 +27,19 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import type Database from 'better-sqlite3'
 import { DirDurableStore } from '../src/tenant-state/durable-store.ts'
+import { discardLocalLedger, forgetTenant } from '../src/tenant-state/epoch-copies.ts'
 import { FencedError, TenantDrainingError } from '../src/tenant-state/errors.ts'
 import { deriveLedgerTenantId, leaseKeyFor, tenantRootFor } from '../src/tenant-state/ids.ts'
-import { SqliteLeaseStore } from '../src/tenant-state/lease-store.ts'
-import { TenantRouter, type RouterEvent, type TenantHandle } from '../src/tenant-state/tenant-router.ts'
+import { SqliteLeaseStore, type LeaseStore } from '../src/tenant-state/lease-store.ts'
+import { TenantLease } from '../src/tenant-state/tenant-lease.ts'
+import { TenantRouter, type RouterEvent, type TenantHandle, type TenantRouterOptions } from '../src/tenant-state/tenant-router.ts'
 import { ledgerDbPath } from '../src/state-ledger.ts'
 import { FaultyDurableStore, ManualClock } from './tenant-state-test-kit.ts'
 
@@ -39,6 +47,7 @@ const ORG = 'acme'
 const KEY = Buffer.alloc(32, 9)
 const TENANT = deriveLedgerTenantId(KEY, 'https://idp.example/acme', 'handoff-user')
 const LEASE_KEY = leaseKeyFor(ORG, TENANT)
+const TENANT_2 = deriveLedgerTenantId(KEY, 'https://idp.example/acme', 'handoff-user-2')
 const TTL = 10_000
 const MARGIN = 2_000
 
@@ -54,6 +63,37 @@ async function check(label: string, assertion: () => void | Promise<void>): Prom
 const root = mkdtempSync(join(tmpdir(), 'gotry-tenant-handoff-'))
 const cleanups: Array<() => void | Promise<void>> = []
 
+/** A call that has to come back: when it does not, the check fails with this message instead of the suite stalling. */
+async function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not settle within ${ms} ms`)), ms) })])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+type Settled = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: unknown }
+const settle = (promise: Promise<unknown>): Promise<Settled> => promise.then((value): Settled => ({ ok: true, value }), (error: unknown): Settled => ({ ok: false, error }))
+
+async function waitFor(condition: () => boolean, timeoutMs: number, what: string): Promise<void> {
+  const until = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`)
+    await sleep(10)
+  }
+}
+
+async function eventually(check: () => Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
+  const until = Date.now() + timeoutMs
+  while (!await check()) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`)
+    await sleep(20)
+  }
+}
+
+const codeOf = (error: unknown): string | undefined => (error as { code?: string } | null)?.code
+
 interface Replica {
   readonly router: TenantRouter
   readonly clock: ManualClock
@@ -61,7 +101,13 @@ interface Replica {
   readonly events: RouterEvent[]
 }
 
-function makeFleet(name: string, options: { realTime?: { ttlMs: number; marginMs: number } } = {}) {
+function makeFleet(name: string, options: {
+  realTime?: { ttlMs: number; marginMs: number }
+  /** Options of every router of the fleet, beyond the ones the fleet sets itself. */
+  router?: Partial<TenantRouterOptions>
+  /** Puts something between the routers and the lease store. */
+  wrapLeases?: (inner: LeaseStore) => LeaseStore
+} = {}) {
   const dir = join(root, name)
   const storeClock = new ManualClock(1_000_000)
   const clocks: ManualClock[] = []
@@ -73,23 +119,26 @@ function makeFleet(name: string, options: { realTime?: { ttlMs: number; marginMs
   return {
     durable,
     leases,
-    replica(id: string, onEvent?: (event: RouterEvent) => void): Replica {
+    /** `node` names the state root; two replicas given the same one share it, as a misconfiguration would make them. */
+    replica(id: string, onEvent?: (event: RouterEvent) => void, node: string = id): Replica {
       const clock = new ManualClock(5_000)
       clocks.push(clock)
       const events: RouterEvent[] = []
-      const stateRoot = join(dir, 'nodes', id)
+      const stateRoot = join(dir, 'nodes', node)
       const router = new TenantRouter({
         stateRoot,
         replicaId: id,
-        leases,
+        leases: options.wrapLeases ? options.wrapLeases(leases) : leases,
         durable,
         ttlMs: options.realTime?.ttlMs ?? TTL,
         marginMs: options.realTime?.marginMs ?? MARGIN,
         ...(options.realTime ? {} : { clock, autoRenew: false }),
         snapshotEveryMs: 0,
+        ...options.router,
         onEvent: (event) => { events.push(event); onEvent?.(event) },
       })
-      cleanups.push(() => router.close().then(() => undefined, () => undefined))
+      // A tenant with a call that never returns keeps close() waiting for its drain deadline: the cleanup must not wait for ever.
+      cleanups.push(() => within(router.close(), 5_000, 'router.close() in the cleanup').then(() => undefined, () => undefined))
       return { router, clock, stateRoot, events }
     },
     /** Time passes everywhere: the store and every replica's own monotonic clock. */
@@ -196,14 +245,14 @@ try {
   })
 
   await check('H4 the lease is renewed while a handoff drains in-flight work, so work longer than the lease is still flushed', async () => {
-    const fleet = makeFleet('h4', { realTime: { ttlMs: 600, marginMs: 100 } })
+    const fleet = makeFleet('h4', { realTime: { ttlMs: 1_200, marginMs: 200 } })
     const a = fleet.replica('replica-a')
     const b = fleet.replica('replica-b')
     const handle = await a.router.openTenant(ORG, TENANT)
     insert(handle, 'k-1')
     let finished = false
     const work = handle.runAsync(async (ledger) => {
-      await sleep(1_500)
+      await sleep(2_000)
       assert.notEqual(ledger.insertEvent({ actor: 'test', kind: 'tenant-state.test', payload: {}, idemKey: 'k-2' }), null)
       finished = true
     })
@@ -270,6 +319,34 @@ try {
     }
   })
 
+  await check('V2 closing the database through the view does not close the router\'s own connection', async () => {
+    const fleet = makeFleet('v2')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    handle.ledger.db.close()
+    handle.ledger.close()
+    insert(handle, 'k-1')
+    assert.deepEqual(keysOf(handle), ['k-1'], 'the router\'s connection is still open and the write is there')
+  })
+
+  await check('V3 the raw database is not reachable through a property descriptor, and the view cannot be rewritten', async () => {
+    const fleet = makeFleet('v3')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    const viaOne = Object.getOwnPropertyDescriptor(handle.ledger, 'db')?.value as Database.Database
+    const viaAll = (Object.getOwnPropertyDescriptors(handle.ledger) as Record<string, PropertyDescriptor>).db?.value as Database.Database
+    a.clock.advance(TTL)
+    for (const [name, db] of [['getOwnPropertyDescriptor', viaOne], ['getOwnPropertyDescriptors', viaAll]] as const) {
+      assert.throws(() => db.prepare('SELECT 1'), (error: unknown) => error instanceof FencedError, `${name} hands out the guarded database, which refuses once the lease is gone`)
+    }
+    assert.throws(() => { (handle.ledger as unknown as { db: unknown }).db = null }, TypeError, 'the view cannot be assigned to')
+    assert.throws(() => { delete (handle.ledger as unknown as { db?: unknown }).db }, TypeError, 'and nothing can be deleted from it')
+    assert.throws(() => Object.setPrototypeOf(handle.ledger, null), TypeError, 'its prototype stays')
+    assert.throws(() => Object.freeze(handle.ledger), TypeError, 'and it cannot be frozen or sealed, which would reach the ledger the router holds')
+    assert.throws(() => Object.preventExtensions(handle.ledger), TypeError, 'or made non-extensible')
+    assert.equal(Object.isExtensible(handle.ledger), true, 'and the ledger the router holds is as extensible as before, whatever was tried')
+  })
+
   // ---- F: forget ----------------------------------------------------------------------------------------
   console.log('-- F forget')
 
@@ -300,6 +377,471 @@ try {
     await assert.rejects(handle.snapshot(), isDraining)
     await forgetting
     assert.deepEqual(await fleet.durable.list(`${LEASE_KEY}/`), [])
+  })
+
+  await check('F3 forget while the final flush is under way wins: the handoff does not release the lease, and nothing of the tenant stays in the store', async () => {
+    const fleet = makeFleet('f3')
+    const a = fleet.replica('replica-a')
+    const b = fleet.replica('replica-b')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    insert(handle, 'k-2')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    fleet.durable.beforeNextList = async () => { await gate }
+    const handingOff = settle(handle.handoff())
+    const forgetting = settle((async () => { await sleep(50); return handle.forget() })())
+    await sleep(100)
+    release()
+    const [handoff, forgotten] = await Promise.all([within(handingOff, 3_000, 'the handoff'), within(forgetting, 3_000, 'forget')])
+    assert.equal(forgotten.ok, true, `forget resolved, got ${forgotten.ok ? '' : String(forgotten.error)}`)
+    assert.equal(handoff.ok, false)
+    if (!handoff.ok) assert.ok(isDraining(handoff.error), `and the handoff is rejected with the draining error, got ${String(handoff.error)}`)
+    assert.deepEqual(await fleet.durable.list(`${LEASE_KEY}/`), [], 'no image, manifest or base of the forgotten tenant is left')
+    assert.ok(!a.events.some(event => event.type === 'released' && event.flushed), 'nothing claims the tenant was flushed')
+    const next = await b.router.openTenant(ORG, TENANT)
+    assert.deepEqual(keysOf(next), [], 'the successor starts from an empty ledger')
+  })
+
+  await check('F4 forget keeps the lease renewed while it waits for a slow upload, so it is not fenced before it can delete', async () => {
+    const fleet = makeFleet('f4', { realTime: { ttlMs: 1_000, marginMs: 150 }, router: { renewEveryMs: 250 } })
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    await handle.snapshot()
+    insert(handle, 'k-2')
+    fleet.durable.slowPut = { match: /\.db$/, ms: 2_000 }
+    const uploading = settle(handle.snapshot())
+    await sleep(50)
+    const forgotten = await settle(within(handle.forget(), 10_000, 'forget over a slow upload'))
+    await uploading
+    assert.equal(forgotten.ok, true, `forget resolved, got ${forgotten.ok ? '' : String(forgotten.error)}`)
+    assert.deepEqual(await fleet.durable.list(`${LEASE_KEY}/`), [], 'and the image that was uploading is gone with the rest')
+  })
+
+  await check('F5 while forget waits for an upload, calls through the handle and the ledger are refused with the typed draining error', async () => {
+    const fleet = makeFleet('f5')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    fleet.durable.beforeNextList = async () => { await gate }
+    const uploading = settle(handle.snapshot())
+    await sleep(30)
+    const forgetting = settle(handle.forget())
+    try {
+      await sleep(30)
+      assert.throws(() => insert(handle, 'late-1'), isDraining)
+      assert.throws(() => handle.run(() => 1), isDraining, 'a callback that never touches the ledger is refused too: the handle, not only the view, says no')
+      assert.throws(() => insertThroughView(handle, 'late-2'), isDraining)
+      assert.throws(() => handle.ledger.db.prepare('SELECT 1'), isDraining)
+    } finally {
+      release()
+    }
+    await Promise.all([uploading, forgetting])
+  })
+
+  await check('F6 while forget waits for an upload, an abandon does not take the lease from under it, and a second forget is refused', async () => {
+    const fleet = makeFleet('f6')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    fleet.durable.beforeNextList = async () => { await gate }
+    const uploading = settle(handle.snapshot())
+    await sleep(30)
+    const forgetting = settle(handle.forget())
+    try {
+      await sleep(30)
+      await handle.abandon()
+      await within(assert.rejects(handle.forget(), isDraining), 1_000, 'a second forget')
+    } finally {
+      release()
+    }
+    const [, forgotten] = await Promise.all([uploading, within(forgetting, 3_000, 'forget')])
+    assert.equal(forgotten.ok, true, `forget finished what it began, got ${forgotten.ok ? '' : String(forgotten.error)}`)
+    assert.deepEqual(await fleet.durable.list(`${LEASE_KEY}/`), [], 'and the store holds nothing of the tenant')
+  })
+
+  await check('F7 forget deletes only what is at or below the floor it raised: a successor that took over while it was paused keeps everything it wrote', async () => {
+    let afterFloor: (() => Promise<void>) | null = null
+    const fleet = makeFleet('f7', {
+      wrapLeases: (inner) => ({
+        read: (key) => inner.read(key),
+        acquire: (key, owner, ttlMs) => inner.acquire(key, owner, ttlMs),
+        renew: (key, owner, epoch, ttlMs) => inner.renew(key, owner, epoch, ttlMs),
+        release: (key, owner, epoch) => inner.release(key, owner, epoch),
+        markForgotten: async (key, owner, epoch) => {
+          const record = await inner.markForgotten(key, owner, epoch)
+          const hook = afterFloor
+          afterFloor = null
+          await hook?.()
+          return record
+        },
+      }),
+    })
+    const a = fleet.replica('replica-a')
+    const b = fleet.replica('replica-b')
+    const c = fleet.replica('replica-c')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'a-1')
+    await handle.snapshot()
+    let successor: TenantHandle | undefined
+    afterFloor = async () => {
+      // The forgetting owner is paused right here, past its lease. The successor takes the tenant over, writes and publishes above the floor.
+      fleet.advance(TTL + 1)
+      successor = await b.router.openTenant(ORG, TENANT)
+      insert(successor, 'b-1')
+      await successor.snapshot()
+    }
+    await handle.forget()
+    assert.ok(successor, 'the successor took the tenant over')
+    const kept = await fleet.durable.list(`${LEASE_KEY}/e00000002/`)
+    assert.ok(kept.some(key => key.endsWith('.db')), `the successor\'s image is still in the store, the store holds ${JSON.stringify(kept)}`)
+    assert.deepEqual(await fleet.durable.list(`${LEASE_KEY}/e00000001/`), [], 'and what the forgotten tenure left is gone')
+    await successor.abandon()
+    const next = await c.router.openTenant(ORG, TENANT)
+    assert.deepEqual(keysOf(next), ['b-1'], 'so the successor\'s crash loses nothing it had published')
+  })
+
+  await check('F8 closing the router waits for a forget that is under way, though the handle has left its table', async () => {
+    const fleet = makeFleet('f8')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    fleet.durable.beforeNextList = async () => { await gate }
+    const uploading = settle(handle.snapshot())
+    await sleep(30)
+    const forgetting = settle(handle.forget())
+    await sleep(30)
+    let closed = false
+    const closing = a.router.close().then((failed) => { closed = true; return failed })
+    try {
+      await sleep(150)
+      assert.equal(closed, false, 'close() is still waiting for the forget')
+    } finally {
+      release()
+    }
+    assert.deepEqual(await within(closing, 3_000, 'router.close()'), [])
+    assert.equal((await within(forgetting, 3_000, 'forget')).ok, true)
+    await uploading
+    assert.deepEqual(await fleet.durable.list(`${LEASE_KEY}/`), [], 'the forget finished before close() returned')
+    assert.ok(a.events.some(event => event.type === 'released' && !event.flushed), 'and it handed the lease back')
+  })
+
+  // ---- S: dead epochs --------------------------------------------------------------------------------------
+  console.log('-- S dead epochs')
+
+  await check('S1 what a superseded owner uploaded after a forget is deleted when the tenant is next opened, and nothing else is', async () => {
+    const fleet = makeFleet('s1')
+    const a = fleet.replica('replica-a')
+    const b = fleet.replica('replica-b')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    await handle.snapshot()
+    await handle.forget()
+    const other = leaseKeyFor(ORG, TENANT_2)
+    // The late upload of an owner that did not know it was superseded lands in the dead epoch, beside a neighbour's own object.
+    await fleet.durable.putIfAbsent(`${LEASE_KEY}/e00000001/snap-000009.db`, Buffer.from('late'))
+    await fleet.durable.putIfAbsent(`${LEASE_KEY}/e00000001/snap-000009.json`, Buffer.from('{}'))
+    await fleet.durable.putIfAbsent(`${other}/e00000001/base.json`, Buffer.from('{}'))
+    assert.equal((await fleet.durable.list(`${LEASE_KEY}/`)).length, 2)
+    const next = await b.router.openTenant(ORG, TENANT)
+    assert.deepEqual(keysOf(next), [])
+    // The sweep runs beside the open, not in it, so a slow store cannot use up the lease before the first renewal.
+    await eventually(async () => (await fleet.durable.list(`${LEASE_KEY}/`)).filter(key => /\/e0*1\//.test(key)).length === 0, 3_000, 'the dead epoch to be swept')
+    assert.equal((await fleet.durable.list(`${other}/`)).length, 1, 'and another tenant\'s objects were not touched')
+  })
+
+  await check('S2 a sweep that fails does not fail the open: the tenant serves, and the next open sweeps again', async () => {
+    const fleet = makeFleet('s2')
+    const a = fleet.replica('replica-a')
+    const b = fleet.replica('replica-b')
+    const c = fleet.replica('replica-c')
+    const first = await a.router.openTenant(ORG, TENANT)
+    insert(first, 'k-1')
+    await first.snapshot()
+    await first.forget()
+    await fleet.durable.putIfAbsent(`${LEASE_KEY}/e00000001/snap-000009.db`, Buffer.from('late'))
+    fleet.durable.failNextDelete = true
+    const second = await b.router.openTenant(ORG, TENANT)
+    insert(second, 'k-2')
+    assert.deepEqual(keysOf(second), ['k-2'], 'the tenant serves although the sweep beside its open failed')
+    await sleep(150)
+    assert.equal((await fleet.durable.list(`${LEASE_KEY}/e00000001/`)).length, 1, 'the failed sweep deleted nothing')
+    await second.handoff()
+    const third = await c.router.openTenant(ORG, TENANT)
+    await eventually(async () => (await fleet.durable.list(`${LEASE_KEY}/e00000001/`)).length === 0, 3_000, 'the next open to sweep the dead epoch')
+    assert.equal(third.isOpen(), true)
+  })
+
+  // ---- P: paths ---------------------------------------------------------------------------------------------
+  console.log('-- P paths')
+
+  await check('P1 forgetting never deletes a directory that is not the tenant\'s own, whatever root the caller supplies', async () => {
+    const dir = join(root, 'p1')
+    const storeClock = new ManualClock(1_000_000)
+    const leases = new SqliteLeaseStore({ path: join(dir, 'leases.db'), nowMs: () => storeClock.nowMs() })
+    cleanups.push(() => leases.close())
+    const durable = new DirDurableStore(join(dir, 'durable'))
+    const lease = await TenantLease.acquire({ store: leases, key: LEASE_KEY, replicaId: 'replica-p1', ttlMs: TTL, marginMs: MARGIN, clock: new ManualClock(5_000) })
+    const keep = (path: string): void => { mkdirSync(path, { recursive: true }); writeFileSync(join(path, 'precious.txt'), 'keep') }
+    const unrelated = join(dir, 'somebody-elses-files')
+    const sibling = tenantRootFor(join(dir, 'node'), ORG, TENANT_2)
+    keep(unrelated)
+    keep(sibling)
+    for (const tenantRoot of [unrelated, sibling, join(sibling, '..')]) {
+      await assert.rejects(forgetTenant({ durable, lease, organization: ORG, ledgerTenant: TENANT, tenantRoot }), RangeError, `a root of ${tenantRoot} is refused`)
+    }
+    for (const path of [unrelated, sibling]) assert.equal(readFileSync(join(path, 'precious.txt'), 'utf8'), 'keep', `${path} is untouched`)
+    const own = tenantRootFor(join(dir, 'node'), ORG, TENANT)
+    keep(own)
+    await forgetTenant({ durable, lease, organization: ORG, ledgerTenant: TENANT, tenantRoot: own })
+    assert.equal(existsSync(own), false, 'the tenant\'s own root is the one that goes')
+  })
+
+  await check('P3 two replicas that share one state root by misconfiguration: the successor\'s restore leaves the older writer holding a file that is no longer on the path, and the older writer is fenced', async () => {
+    const fleet = makeFleet('p3')
+    const a = fleet.replica('replica-a', undefined, 'shared-root')
+    const b = fleet.replica('replica-b', undefined, 'shared-root')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    await handle.snapshot()
+    const file = ledgerDbPath(tenantRootFor(a.stateRoot, ORG, TENANT))
+    // What a writer that is still running has open. Holding it also keeps its inode from being handed to the file that
+    // replaces it, which a file system may do the moment a file is deleted (Linux does; comparing inode numbers is no test).
+    const held = openSync(file, 'r')
+    try {
+      fleet.advance(TTL + 1)
+      const next = await b.router.openTenant(ORG, TENANT)
+      assert.equal(fstatSync(held).nlink, 0, 'the file the older writer has open is unlinked: the restore put another one on the path')
+      assert.notEqual(statSync(file).ino, fstatSync(held).ino, 'and the path leads to a different file')
+      assert.throws(() => insert(handle, 'zombie'), (error: unknown) => error instanceof FencedError)
+      assert.deepEqual(keysOf(next), ['k-1'], 'the successor\'s ledger is the durable copy')
+    } finally {
+      closeSync(held)
+    }
+  })
+
+  await check('P4 the directory that was checked is the one that goes: a ".." behind a symlink cannot lead the deletion somewhere else, and discarding the ledger takes the same guard', async () => {
+    const dir = join(root, 'p4')
+    const storeClock = new ManualClock(1_000_000)
+    const leases = new SqliteLeaseStore({ path: join(dir, 'leases.db'), nowMs: () => storeClock.nowMs() })
+    cleanups.push(() => leases.close())
+    const durable = new DirDurableStore(join(dir, 'durable'))
+    const lease = await TenantLease.acquire({ store: leases, key: LEASE_KEY, replicaId: 'replica-p4', ttlMs: TTL, marginMs: MARGIN, clock: new ManualClock(5_000) })
+    const tail = join('orgs', ORG, 'tenants', TENANT)
+    const deep = join(dir, 'elsewhere', 'deep')
+    mkdirSync(deep, { recursive: true })
+    symlinkSync(deep, join(dir, 'lnk'))
+    const checked = join(dir, tail)
+    const behindTheLink = join(dir, 'elsewhere', tail)
+    for (const path of [checked, behindTheLink]) {
+      mkdirSync(path, { recursive: true })
+      writeFileSync(join(path, 'precious.txt'), 'keep')
+    }
+    // Read as text this ends in the tenant\'s own path; the operating system reads "lnk/.." as the parent of what the link points to.
+    const tenantRoot = `${join(dir, 'lnk')}/../${tail}`
+    assert.throws(() => discardLocalLedger({ durable, lease, organization: ORG, ledgerTenant: TENANT, tenantRoot: join(dir, 'somebody-elses-files') }), RangeError)
+    await forgetTenant({ durable, lease, organization: ORG, ledgerTenant: TENANT, tenantRoot })
+    assert.equal(readFileSync(join(behindTheLink, 'precious.txt'), 'utf8'), 'keep', 'the directory the string leads to behind the link is untouched')
+    assert.equal(existsSync(checked), false, 'the one that was checked is the one that went')
+  })
+
+  await check('P2 deleting by prefix takes whole segments only, so a name that is the start of another one cannot take its neighbour', async () => {
+    const store = new DirDurableStore(join(root, 'p2'))
+    await store.putIfAbsent('acme/t1/e00000001/base.json', Buffer.from('1'))
+    await store.putIfAbsent('acme2/t9/e00000001/base.json', Buffer.from('2'))
+    await assert.rejects(store.deletePrefix('acme'), RangeError)
+    assert.equal((await store.list('acme2/')).length, 1, 'the neighbour is untouched')
+    assert.equal(await store.deletePrefix('acme/'), 1)
+    assert.equal((await store.list('acme2/')).length, 1)
+  })
+
+  // ---- D: the drain ------------------------------------------------------------------------------------
+  console.log('-- D drain')
+
+  await check('D1 a drain that never finishes is bounded: the handoff is rejected with the typed timeout, the operator is told, and the tenant serves again', async () => {
+    const fleet = makeFleet('d1', { realTime: { ttlMs: 2_000, marginMs: 200 }, router: { drainTimeoutMs: 300, renewEveryMs: 200 } })
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    handle.runAsync(() => new Promise<void>(() => undefined)).catch(() => undefined)
+    const outcome = await settle(within(handle.handoff(), 3_000, 'a handoff over a call that never returns'))
+    assert.equal(outcome.ok, false)
+    if (!outcome.ok) assert.equal(codeOf(outcome.error), 'GOTRY_TENANT_DRAIN_TIMEOUT', `rejected with the drain timeout, got ${String(outcome.error)}`)
+    assert.equal(handle.isOpen(), true, 'the tenant serves again')
+    insert(handle, 'k-2')
+    await handle.snapshot()
+    assert.deepEqual(keysOf(handle), ['k-1', 'k-2'])
+    assert.ok(a.events.some(event => event.type === 'drain_timeout'), 'the operator is told')
+    assert.ok(!a.events.some(event => event.type === 'released'), 'and nothing was released')
+  })
+
+  await check('D2 close() hands tenants off side by side, so one stuck tenant does not hold the others behind it', async () => {
+    const fleet = makeFleet('d2', { realTime: { ttlMs: 3_000, marginMs: 300 }, router: { drainTimeoutMs: 1_500, renewEveryMs: 300 } })
+    const a = fleet.replica('replica-a')
+    const first = await a.router.openTenant(ORG, TENANT)
+    const second = await a.router.openTenant(ORG, TENANT_2)
+    insert(first, 'k-1')
+    insert(second, 'k-1')
+    first.runAsync(() => new Promise<void>(() => undefined)).catch(() => undefined)
+    const closing = a.router.close()
+    const secondKey = leaseKeyFor(ORG, TENANT_2)
+    const handedOff = (): boolean => a.events.some(event => event.type === 'released' && event.key === secondKey && event.flushed)
+    await waitFor(handedOff, 1_000, 'the second tenant to be handed off while the first is still draining')
+    assert.deepEqual(await within(closing, 8_000, 'router.close() with one tenant stuck'), [LEASE_KEY], 'the stuck tenant is reported, and only it')
+  })
+
+  for (const how of ['abandon', 'forget', 'lost'] as const) {
+    await check(`D3 ${how}: a handoff that waits for a call that never returns is settled by it, not left pending`, async () => {
+      const fleet = makeFleet(`d3-${how}`, { router: { drainTimeoutMs: 10_000 } })
+      const a = fleet.replica('replica-a')
+      const b = fleet.replica('replica-b')
+      const handle = await a.router.openTenant(ORG, TENANT)
+      insert(handle, 'k-1')
+      handle.runAsync(() => new Promise<void>(() => undefined)).catch(() => undefined)
+      const handingOff = settle(handle.handoff())
+      await sleep(30)
+      if (how === 'abandon') await handle.abandon()
+      else if (how === 'forget') await handle.forget()
+      else {
+        // The lease lapses, a successor takes over, and the next renewal is refused: the tenure is over.
+        fleet.advance(TTL + 1)
+        await b.router.openTenant(ORG, TENANT)
+        await handle.renew().catch(() => undefined)
+      }
+      const outcome = await within(handingOff, 1_000, `a handoff of a tenant that was ${how} meanwhile`)
+      assert.equal(outcome.ok, false)
+      if (!outcome.ok) assert.ok(isDraining(outcome.error), `the handoff is rejected with the draining error, got ${String(outcome.error)}`)
+      assert.equal(handle.isOpen(), false)
+      assert.ok(!a.events.some(event => event.type === 'released' && event.flushed), 'and nothing claims a flush')
+    })
+  }
+
+  await check('D4 while a handoff drains, new calls through the handle are refused with the draining error, and the work that was running finishes and is flushed', async () => {
+    const fleet = makeFleet('d4')
+    const a = fleet.replica('replica-a')
+    const b = fleet.replica('replica-b')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    let finish!: () => void
+    const hold = new Promise<void>((resolve) => { finish = resolve })
+    const running = handle.runAsync(async (ledger) => {
+      await hold
+      assert.notEqual(ledger.insertEvent({ actor: 'test', kind: 'tenant-state.test', payload: {}, idemKey: 'k-2' }), null)
+    })
+    const handingOff = settle(handle.handoff())
+    try {
+      await sleep(30)
+      assert.throws(() => handle.run(() => 1), isDraining, 'run() is refused, whatever the callback does')
+      await assert.rejects(handle.runAsync(async () => undefined), isDraining)
+      assert.equal(handle.isOpen(), false)
+    } finally {
+      finish()
+    }
+    await running
+    const outcome = await within(handingOff, 3_000, 'the handoff')
+    assert.equal(outcome.ok, true, `the handoff finished once the work did, got ${outcome.ok ? '' : String(outcome.error)}`)
+    const next = await b.router.openTenant(ORG, TENANT)
+    assert.deepEqual(keysOf(next), ['k-1', 'k-2'], 'and the work that was running is in the final image')
+  })
+
+  await check('D5 a call on a tenant whose abandon is under way is refused with the draining error, not let through to a closed database', async () => {
+    const fleet = makeFleet('d5')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    const abandoning = handle.abandon()
+    assert.throws(() => handle.run(() => 1), isDraining)
+    await within(assert.rejects(handle.forget(), isDraining), 1_000, 'a forget on a tenant whose abandon is under way')
+    await abandoning
+    assert.equal(a.events.filter(event => event.type === 'released').length, 1, 'and the tenure ended once')
+    assert.throws(() => handle.run(() => 1), (error: unknown) => error instanceof FencedError, 'and once the lease is handed back it is the lease that says no')
+  })
+
+  await check('D6 the drain options are checked, and a close concurrency of one brings the sequential close back', async () => {
+    const fleet = makeFleet('d6')
+    const build = (extra: Partial<TenantRouterOptions>): TenantRouter => new TenantRouter({ stateRoot: join(root, 'd6'), replicaId: 'replica-x', leases: fleet.leases, durable: fleet.durable, ...extra })
+    for (const bad of [0, -1, 1.5, Number.NaN, 2_147_483_648]) assert.throws(() => build({ drainTimeoutMs: bad }), RangeError, `drainTimeoutMs ${bad} is refused`)
+    for (const bad of [0, -1, 1.5, Number.NaN]) assert.throws(() => build({ closeConcurrency: bad }), RangeError, `closeConcurrency ${bad} is refused`)
+
+    const sequential = makeFleet('d6-one', { realTime: { ttlMs: 3_000, marginMs: 300 }, router: { drainTimeoutMs: 2_000, renewEveryMs: 300, closeConcurrency: 1 } })
+    const a = sequential.replica('replica-a')
+    const first = await a.router.openTenant(ORG, TENANT)
+    const second = await a.router.openTenant(ORG, TENANT_2)
+    insert(first, 'k-1')
+    insert(second, 'k-1')
+    first.runAsync(() => new Promise<void>(() => undefined)).catch(() => undefined)
+    const closing = a.router.close()
+    await sleep(400)
+    const secondKey = leaseKeyFor(ORG, TENANT_2)
+    assert.ok(!a.events.some(event => event.type === 'released' && event.key === secondKey), 'with one lane the second tenant waits behind the stuck first one')
+    assert.deepEqual(await within(closing, 10_000, 'router.close()'), [LEASE_KEY])
+    assert.ok(a.events.some(event => event.type === 'released' && event.key === secondKey && event.flushed), 'and is handed off once the first one has given up')
+  })
+
+  // ---- R: the renewal chain ------------------------------------------------------------------------------
+  console.log('-- R renewal')
+
+  await check('R1 a failed handoff does not start a second renewal chain while a renewal is still under way', async () => {
+    const gate = { hold: false, started: 0, waiting: [] as Array<() => void> }
+    const fleet = makeFleet('r1', {
+      realTime: { ttlMs: 5_000, marginMs: 500 },
+      router: { renewEveryMs: 600 },
+      wrapLeases: (inner) => ({
+        read: (key) => inner.read(key),
+        acquire: (key, owner, ttlMs) => inner.acquire(key, owner, ttlMs),
+        release: (key, owner, epoch) => inner.release(key, owner, epoch),
+        markForgotten: (key, owner, epoch) => inner.markForgotten(key, owner, epoch),
+        renew: async (key, owner, epoch, ttlMs) => {
+          gate.started += 1
+          if (gate.hold) await new Promise<void>((resolve) => { gate.waiting.push(resolve) })
+          return inner.renew(key, owner, epoch, ttlMs)
+        },
+      }),
+    })
+    const a = fleet.replica('replica-a')
+    gate.hold = true
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    await waitFor(() => gate.started === 1, 4_000, 'the first renewal to start')
+    fleet.durable.down = true
+    await assert.rejects(handle.handoff(), /injected outage/)
+    fleet.durable.down = false
+    // A second chain would fire its timer in this time and queue a renewal behind the one that is still under way.
+    await sleep(900)
+    gate.hold = false
+    for (const resume of gate.waiting.splice(0)) resume()
+    await sleep(120)
+    assert.equal(gate.started, 1, 'the next renewal waits for its own timer: no second chain queued one')
+    await handle.handoff()
+  })
+
+  // ---- T: run() takes a synchronous callback ---------------------------------------------------------------------
+  console.log('-- T run')
+
+  await check('T1 run() refuses a callback that returns a promise, and the promise it leaves behind cannot become an unhandled rejection', async () => {
+    const fleet = makeFleet('t1')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      assert.throws(
+        () => handle.run((async () => { await sleep(10); throw new Error('floating') }) as unknown as (ledger: unknown) => never),
+        (error: unknown) => error instanceof TypeError && /runAsync/.test(error.message),
+      )
+      await sleep(80)
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    assert.deepEqual(unhandled, [], 'the rejection of a floating async callback is not left unhandled')
   })
 
   // ---- O: observers ------------------------------------------------------------------------------------
@@ -334,6 +876,20 @@ try {
     insert(kept, 'k-2')
     await kept.abandon()
     assert.equal(existsSync(file), true, 'an abandoned tenant\'s file may hold writes that exist nowhere else, so it stays for an operator')
+  })
+
+  await check('L2 the local ledger of an abandoned tenure is replaced, not recovered, by the next open on the same replica: the durable copy is the authority', async () => {
+    const fleet = makeFleet('l2')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    await handle.snapshot()
+    insert(handle, 'k-2')
+    await handle.abandon()
+    const file = ledgerDbPath(tenantRootFor(a.stateRoot, ORG, TENANT))
+    assert.equal(existsSync(file), true, 'the abandoned file is there until the next open')
+    const again = await a.router.openTenant(ORG, TENANT)
+    assert.deepEqual(keysOf(again), ['k-1'], 'k-2 was written after the last snapshot: it is the declared tail of D-a and is not brought back from the old file')
   })
 
   console.log(`tenant-state-handoff: ${passed} checks passed`)

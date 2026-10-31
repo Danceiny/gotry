@@ -93,6 +93,22 @@ export class TenantDrainingError extends TenantStateError {
   }
 }
 
+/**
+ * A handoff gave up waiting for calls that were already running. The tenant serves again, nothing was flushed or released,
+ * and the caller decides: retry later, or abandon the tenant and give up its writes since the last snapshot. Waiting for
+ * ever would hold the lease for ever, because it is renewed through the drain.
+ */
+export class DrainTimeoutError extends TenantStateError {
+  readonly inFlight: number
+  readonly timeoutMs: number
+
+  constructor(key: string, inFlight: number, timeoutMs: number) {
+    super('GOTRY_TENANT_DRAIN_TIMEOUT', `tenant ${key} still had ${inFlight} call(s) running after ${timeoutMs} ms of draining`)
+    this.inFlight = inFlight
+    this.timeoutMs = timeoutMs
+  }
+}
+
 /** The router was closed; no tenant can be opened through it any more. */
 export class RouterClosedError extends TenantStateError {
   constructor() {
