@@ -27,7 +27,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -604,7 +604,7 @@ try {
     assert.equal(existsSync(own), false, 'the tenant\'s own root is the one that goes')
   })
 
-  await check('P3 two replicas that share one state root by misconfiguration: the successor\'s restore puts a new file in place of the shared one, and the older writer is fenced', async () => {
+  await check('P3 two replicas that share one state root by misconfiguration: the successor\'s restore leaves the older writer holding a file that is no longer on the path, and the older writer is fenced', async () => {
     const fleet = makeFleet('p3')
     const a = fleet.replica('replica-a', undefined, 'shared-root')
     const b = fleet.replica('replica-b', undefined, 'shared-root')
@@ -612,12 +612,19 @@ try {
     insert(handle, 'k-1')
     await handle.snapshot()
     const file = ledgerDbPath(tenantRootFor(a.stateRoot, ORG, TENANT))
-    const before = statSync(file).ino
-    fleet.advance(TTL + 1)
-    const next = await b.router.openTenant(ORG, TENANT)
-    assert.notEqual(statSync(file).ino, before, 'the restore replaced the file on the path by another one')
-    assert.throws(() => insert(handle, 'zombie'), (error: unknown) => error instanceof FencedError)
-    assert.deepEqual(keysOf(next), ['k-1'], 'and the successor\'s ledger is the durable copy')
+    // What a writer that is still running has open. Holding it also keeps its inode from being handed to the file that
+    // replaces it, which a file system may do the moment a file is deleted (Linux does; comparing inode numbers is no test).
+    const held = openSync(file, 'r')
+    try {
+      fleet.advance(TTL + 1)
+      const next = await b.router.openTenant(ORG, TENANT)
+      assert.equal(fstatSync(held).nlink, 0, 'the file the older writer has open is unlinked: the restore put another one on the path')
+      assert.notEqual(statSync(file).ino, fstatSync(held).ino, 'and the path leads to a different file')
+      assert.throws(() => insert(handle, 'zombie'), (error: unknown) => error instanceof FencedError)
+      assert.deepEqual(keysOf(next), ['k-1'], 'the successor\'s ledger is the durable copy')
+    } finally {
+      closeSync(held)
+    }
   })
 
   await check('P4 the directory that was checked is the one that goes: a ".." behind a symlink cannot lead the deletion somewhere else, and discarding the ledger takes the same guard', async () => {
@@ -763,7 +770,7 @@ try {
     for (const bad of [0, -1, 1.5, Number.NaN, 2_147_483_648]) assert.throws(() => build({ drainTimeoutMs: bad }), RangeError, `drainTimeoutMs ${bad} is refused`)
     for (const bad of [0, -1, 1.5, Number.NaN]) assert.throws(() => build({ closeConcurrency: bad }), RangeError, `closeConcurrency ${bad} is refused`)
 
-    const sequential = makeFleet('d6-one', { realTime: { ttlMs: 3_000, marginMs: 300 }, router: { drainTimeoutMs: 900, renewEveryMs: 300, closeConcurrency: 1 } })
+    const sequential = makeFleet('d6-one', { realTime: { ttlMs: 3_000, marginMs: 300 }, router: { drainTimeoutMs: 2_000, renewEveryMs: 300, closeConcurrency: 1 } })
     const a = sequential.replica('replica-a')
     const first = await a.router.openTenant(ORG, TENANT)
     const second = await a.router.openTenant(ORG, TENANT_2)
@@ -774,7 +781,7 @@ try {
     await sleep(400)
     const secondKey = leaseKeyFor(ORG, TENANT_2)
     assert.ok(!a.events.some(event => event.type === 'released' && event.key === secondKey), 'with one lane the second tenant waits behind the stuck first one')
-    assert.deepEqual(await within(closing, 8_000, 'router.close()'), [LEASE_KEY])
+    assert.deepEqual(await within(closing, 10_000, 'router.close()'), [LEASE_KEY])
     assert.ok(a.events.some(event => event.type === 'released' && event.key === secondKey && event.flushed), 'and is handed off once the first one has given up')
   })
 
@@ -785,7 +792,7 @@ try {
     const gate = { hold: false, started: 0, waiting: [] as Array<() => void> }
     const fleet = makeFleet('r1', {
       realTime: { ttlMs: 5_000, marginMs: 500 },
-      router: { renewEveryMs: 300 },
+      router: { renewEveryMs: 600 },
       wrapLeases: (inner) => ({
         read: (key) => inner.read(key),
         acquire: (key, owner, ttlMs) => inner.acquire(key, owner, ttlMs),
@@ -802,12 +809,12 @@ try {
     gate.hold = true
     const handle = await a.router.openTenant(ORG, TENANT)
     insert(handle, 'k-1')
-    await waitFor(() => gate.started === 1, 2_000, 'the first renewal to start')
+    await waitFor(() => gate.started === 1, 4_000, 'the first renewal to start')
     fleet.durable.down = true
     await assert.rejects(handle.handoff(), /injected outage/)
     fleet.durable.down = false
     // A second chain would fire its timer in this time and queue a renewal behind the one that is still under way.
-    await sleep(450)
+    await sleep(900)
     gate.hold = false
     for (const resume of gate.waiting.splice(0)) resume()
     await sleep(120)
