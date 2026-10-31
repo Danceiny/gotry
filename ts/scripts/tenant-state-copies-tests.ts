@@ -604,7 +604,7 @@ try {
     assert.deepEqual(idemKeys(r2.ledger), [], 'the tenant starts from nothing')
   })
 
-  await check('F2 a copy that a superseded owner uploads after the forget is masked by the floor and removed by the sweep', async () => {
+  await check('F2 a copy that a superseded owner uploads after the forget is masked by the floor, removed when the tenant is next opened, and by the sweep at any other time', async () => {
     const world = makeWorld('f2')
     const frozen = world.replicaClock()
     const r1 = await boot(world, 'r1', { clock: frozen })
@@ -630,6 +630,12 @@ try {
     assert.equal(r3.lease.forgottenAtEpoch, 2)
     assert.equal(r3.restored.restoredFrom, null, 'the floor masks every copy at or below epoch 2')
     assert.deepEqual(idemKeys(r3.ledger), [])
+    assert.deepEqual(await world.store.list(`${KEY}/e00000001/`), [], 'the open of the next owner already deleted what the dead epoch held')
+    assert.equal(await sweepMaskedCopies(world.store, KEY, r3.lease.forgottenAtEpoch), 0, 'so a sweep finds nothing to do')
+
+    // The same owner is slow twice: what it uploads after the open is found by the sweep, which an operator runs at any time.
+    assert.equal(await world.store.putIfAbsent(snapKey(1, 1, 'db'), oldImage), true)
+    assert.equal(await world.store.putIfAbsent(snapKey(1, 1, 'json'), oldManifest), true)
     assert.equal(await sweepMaskedCopies(world.store, KEY, r3.lease.forgottenAtEpoch), 2)
     assert.deepEqual(await world.store.list(`${KEY}/e00000001/`), [])
   })

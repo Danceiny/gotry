@@ -22,11 +22,11 @@ import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { ledgerDbPath, ledgerExists, openDb, type StateLedger } from '../state-ledger.ts'
 import type { DurableStore } from './durable-store.ts'
 import { CopyConflictError, RestoreVerificationError } from './errors.ts'
-import { leaseKeyFor } from './ids.ts'
+import { leaseKeyFor, tenantRootFor } from './ids.ts'
 import type { TenantLease } from './tenant-lease.ts'
 
 const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
@@ -216,7 +216,21 @@ function verifyCandidate(bytes: Uint8Array, manifest: SnapshotManifest, ledgerTe
 function assertContext(context: EpochCopyContext): string {
   const key = leaseKeyFor(context.organization, context.ledgerTenant)
   if (context.lease.key !== key) throw new RangeError(`the lease ${context.lease.key} does not belong to tenant ${key}`)
+  assertOwnTenantRoot(context)
   return key
+}
+
+/**
+ * `forgetTenant` deletes the tenant root recursively, and the root comes from the caller. It has to be the directory
+ * `tenantRootFor` lays out for exactly this tenant, `<state root>/orgs/<organization>/tenants/<tenant>`, so a mistaken or
+ * hostile context can name no other directory.
+ */
+function assertOwnTenantRoot(context: EpochCopyContext): void {
+  const expectedTail = tenantRootFor('/', context.organization, context.ledgerTenant)
+  const actual = resolve(context.tenantRoot)
+  if (!isAbsolute(context.tenantRoot) || !actual.endsWith(expectedTail)) {
+    throw new RangeError(`the tenant root ${JSON.stringify(context.tenantRoot.slice(0, 200))} is not the root of tenant ${leaseKeyFor(context.organization, context.ledgerTenant)}`)
+  }
 }
 
 /**
@@ -409,6 +423,10 @@ export async function restoreTenantLedger(context: EpochCopyContext): Promise<Re
     (bytes, manifest) => verifyCandidate(bytes, manifest, ledgerTenant),
   )
   lease.assertHeld()
+  // Copies at or below the forgotten floor are dead whoever wrote them, a superseded owner's late upload included: delete
+  // them now. A failed sweep must not keep the tenant from opening; the next open does it again.
+  if (lease.forgottenAtEpoch > 0) await sweepMaskedCopies(durable, key, lease.forgottenAtEpoch).catch(() => 0)
+  lease.assertHeld()
 
   evictCachedLedger(tenantRoot, ledgerTenant)
   const dbPath = ledgerDbPath(tenantRoot)
@@ -432,11 +450,6 @@ export async function restoreTenantLedger(context: EpochCopyContext): Promise<Re
 // ---- forgetting --------------------------------------------------------------------
 
 /**
- * Forget means delete (red line 6): the floor goes into the lease record first, so no later restore can
- * read an older copy even if a superseded owner uploads one afterwards; then every durable copy and the
- * local files go; then the lease is handed back. The caller closes the tenant's ledger first.
- */
-/**
  * Removes the local ledger files (the database and its -wal and -shm) of a tenure that flushed everything. Other files
  * of the tenant's directory, such as a planner's working files, are not the ledger's and stay.
  */
@@ -445,6 +458,11 @@ export function discardLocalLedger(context: EpochCopyContext): void {
   for (const path of [file, `${file}-wal`, `${file}-shm`]) rmSync(path, { force: true })
 }
 
+/**
+ * Forget means delete (red line 6): the floor goes into the lease record first, so no later restore can
+ * read an older copy even if a superseded owner uploads one afterwards; then every durable copy and the
+ * local files go; then the lease is handed back. The caller closes the tenant's ledger first.
+ */
 export async function forgetTenant(context: EpochCopyContext): Promise<{ readonly deletedObjects: number; readonly floor: number }> {
   const key = assertContext(context)
   context.lease.assertHeld()
@@ -455,7 +473,11 @@ export async function forgetTenant(context: EpochCopyContext): Promise<{ readonl
   return { deletedObjects, floor: record.forgottenAtEpoch }
 }
 
-/** Deletes copies at or below the forgotten floor that a superseded owner uploaded after the forget. */
+/**
+ * Deletes copies at or below the forgotten floor that a superseded owner uploaded after the forget. Every open of a
+ * tenant that was ever forgotten runs it; for one that is never opened again an operator runs it, once the previous
+ * owner's lease has certainly run out.
+ */
 export async function sweepMaskedCopies(durable: DurableStore, leaseKey: string, forgottenAtEpoch: number): Promise<number> {
   let deleted = 0
   const dead = new Set<number>()

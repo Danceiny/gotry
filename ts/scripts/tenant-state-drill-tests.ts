@@ -12,7 +12,9 @@
  *   I3  no write is acknowledged after the next owner took the lease (the local gate works on a real clock);
  *   I4  the restored ledger is intact, holds only this tenant, and is exactly the lineage the durable copies describe:
  *       every pinned snapshot holds exactly the writes acknowledged before it began, and nothing else is there;
- *   I5  a graceful handoff loses nothing; a crash loses only the writes after the last snapshot;
+ *   I5  a graceful handoff loses nothing, also from a consumer that keeps writing through the ledger it holds while the
+ *       replica hands off (and is refused once the final image is being taken), over an object store that is slow to
+ *       take an image; a crash loses only the writes after the last snapshot;
  *   I6  the two tenants never see each other's writes.
  *
  * A simulated trigger is not the real trigger: this is engineering evidence for A1 and counts for none of A3 or A4.
@@ -82,7 +84,7 @@ function spawnReplica(): Replica {
   const child = spawn(process.execPath, ['--import', 'tsx', WORKER, join(root, 'nodes', id), leaseDb, durableDir, logDir, id, ORG, TENANT_A, TENANT_B], {
     cwd: TS_DIR,
     // A replica killed mid-snapshot cannot clean up its scratch directory, so it gets one inside the drill root.
-    env: { ...process.env, TMPDIR: join(root, 'tmp') },
+    env: { ...process.env, TMPDIR: join(root, 'tmp'), TENANT_DRILL_SLOW_PUT_MS: '40' },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   const replica: Replica = {
@@ -117,6 +119,7 @@ async function waitFor<T>(label: string, probe: () => T | Promise<T>, accept: (v
 interface Entry {
   t: string
   replica: string
+  via?: string
   wall: number
   tenant?: string
   epoch?: number
@@ -194,6 +197,7 @@ try {
   frozen.child.kill('SIGCONT')
   await sleep(1_800)
   const afterResume = readLogs().filter(e => e.replica === frozen.id && e.wall >= resumedAt && (e.t === 'refused' || (e.t === 'event' && e.event === 'lost')))
+  assert.ok(afterResume.length > 0, 'a frozen owner that wakes up past its lease is refused or told it lost the tenant, and the logs show it')
   console.log(`  ok - owner of tenant b frozen past its lease (epoch ${frozenEpoch} -> ${epochB}), resumed after ${resumedAt - takenAt} ms: ${afterResume.length} refusals or losses logged after the resume`)
 
   const gracefulOwner = replicas.get((await leases.read(KEY_A))?.owner ?? '')
@@ -234,6 +238,7 @@ try {
 
   let totalAcks = 0
   let totalLost = 0
+  let checkedLinks = 0
   for (const { label, tenant, key } of TENANTS) {
     let handle: TenantHandle | null = null
     for (let waited = 0; handle === null; waited += 150) {
@@ -287,7 +292,10 @@ try {
       previousEvents = manifest.events
       writesInChain.set(link.epoch, written)
       const covered = startsByEpoch.get(link.epoch)?.[link.seq - 1]
-      if (covered !== undefined) eq(written, covered, `I4 tenant ${label}: e${link.epoch}/snap-${link.seq} holds exactly the ${covered} writes acknowledged before it began`)
+      if (covered !== undefined) {
+        eq(written, covered, `I4 tenant ${label}: e${link.epoch}/snap-${link.seq} holds exactly the ${covered} writes acknowledged before it began`)
+        checkedLinks += 1
+      }
       for (let n = 1; n <= written; n += 1) expected.add(`${label}:${link.epoch}:${n}`)
     }
     const present = handle.run(ledger => (ledger.db.prepare("SELECT idem_key FROM events WHERE kind = 'tenant-state.drill'").all() as Array<{ idem_key: string }>).map(row => row.idem_key))
@@ -311,6 +319,12 @@ try {
     console.log(`  ok - tenant ${label}: ${grants.length} epochs, ${acks.length} acknowledged writes, lineage of ${chain.length} snapshots with ${expected.size} events, ${lost} acknowledged writes in crashed tails`)
   }
   await verifier.close()
+
+  ok(checkedLinks > 0, `I4 the per-link check ran on ${checkedLinks} snapshots of the lineages, it is not skipped for want of a log`)
+  const viewAcks = logs.filter(e => e.t === 'ack' && e.via === 'view').length
+  const viewRefusals = logs.filter(e => e.t === 'refused' && e.via === 'view')
+  ok(viewAcks > 0, `I5 a consumer that kept the ledger wrote ${viewAcks} acknowledged events through it while its replica handed off, and none of them is missing from the final images`)
+  ok(viewRefusals.length > 0 && viewRefusals.every(e => e.code === 'GOTRY_TENANT_DRAINING'), `I5 once the final image was being taken that consumer was refused with the draining error (${viewRefusals.length} refusals)`)
 
   const killed = killedEpochs.length
   console.log(`tenant-state-drill-tests: ${passed} assertions passed (${killed} SIGKILLs, 1 SIGSTOP past the lease, 1 graceful handoff, ${totalAcks} acknowledged writes, ${totalLost} lost in crashed tails)`)

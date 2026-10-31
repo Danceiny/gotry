@@ -23,7 +23,10 @@ export interface DurableStore {
   get(key: string): Promise<Uint8Array | null>
   /** Every key that starts with the prefix, sorted. */
   list(prefix: string): Promise<string[]>
-  /** Deletes every key that starts with the prefix and returns how many it deleted. */
+  /**
+   * Deletes every key that starts with the prefix and returns how many it deleted. The prefix is whole segments and ends
+   * with `/`: a delete that stopped inside a name would take every neighbour that starts with the same letters.
+   */
   deletePrefix(prefix: string): Promise<number>
 }
 
@@ -49,6 +52,13 @@ export function assertDurablePrefix(prefix: string): string {
   ) {
     throw new RangeError(`invalid durable prefix ${JSON.stringify(typeof prefix === 'string' ? prefix.slice(0, 80) : prefix)}`)
   }
+  return prefix
+}
+
+/** A prefix to delete by: complete segments, so `acme/` can never take `acme2/`. */
+export function assertDurableDeletePrefix(prefix: string): string {
+  assertDurablePrefix(prefix)
+  if (!prefix.endsWith('/')) throw new RangeError(`a durable delete takes whole segments and ends with "/", got ${JSON.stringify(prefix.slice(0, 80))}`)
   return prefix
 }
 
@@ -114,6 +124,7 @@ export class DirDurableStore implements DurableStore {
   }
 
   async deletePrefix(prefix: string): Promise<number> {
+    assertDurableDeletePrefix(prefix)
     const keys = await this.list(prefix)
     try {
       for (const key of keys) await rm(this.pathOf(key), { force: true })

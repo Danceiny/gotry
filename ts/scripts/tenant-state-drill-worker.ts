@@ -6,13 +6,17 @@
  * The replica keeps trying to own both tenants. For each tenant it holds, it writes one numbered event at a
  * time and publishes a snapshot every 120 ms. It logs, before and after every step, what it is about to do and
  * what was acknowledged, in a file that survives its own death, so the drill can compare the final ledger with
- * what the replica believed. On SIGTERM it hands every tenant off gracefully and exits.
+ * what the replica believed. On SIGTERM it hands every tenant off gracefully and exits; while it does, a consumer that
+ * keeps the ledger it was handed (a booking runtime does) goes on writing through it, inside a `runAsync` bracket the
+ * drain has to wait for, and then tries once more after the bracket, when the view has to refuse.
+ *
+ * TENANT_DRILL_SLOW_PUT_MS makes the object store slow to take an image, as a real one can be.
  */
 
 import { closeSync, openSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { DirDurableStore } from '../src/tenant-state/durable-store.ts'
+import { DirDurableStore, type DurableStore } from '../src/tenant-state/durable-store.ts'
 import { LeaseHeldError } from '../src/tenant-state/errors.ts'
 import { SqliteLeaseStore } from '../src/tenant-state/lease-store.ts'
 import { TenantRouter, type TenantHandle } from '../src/tenant-state/tenant-router.ts'
@@ -21,6 +25,22 @@ const [stateRoot, leaseDb, durableDir, logDir, replicaId, organization, tenantA,
 
 const SNAPSHOT_EVERY_MS = 120
 const RETRY_AFTER_HELD_MS = 150
+const DRAIN_WRITER_MS = 150
+const SLOW_PUT_MS = Number(process.env.TENANT_DRILL_SLOW_PUT_MS ?? 0)
+
+/** The reference store with a delay before every image it takes, so an upload is a window and not an instant. */
+class SlowImages implements DurableStore {
+  constructor(private readonly inner: DurableStore, private readonly ms: number) {}
+
+  async putIfAbsent(key: string, bytes: Uint8Array): Promise<boolean> {
+    if (key.endsWith('.db')) await sleep(this.ms)
+    return this.inner.putIfAbsent(key, bytes)
+  }
+
+  get(key: string): Promise<Uint8Array | null> { return this.inner.get(key) }
+  list(prefix: string): Promise<string[]> { return this.inner.list(prefix) }
+  deletePrefix(prefix: string): Promise<number> { return this.inner.deletePrefix(prefix) }
+}
 
 const log = openSync(join(logDir, `${replicaId}.jsonl`), 'a')
 function record(entry: Record<string, unknown>): void {
@@ -31,7 +51,7 @@ const router = new TenantRouter({
   stateRoot,
   replicaId,
   leases: new SqliteLeaseStore({ path: leaseDb }),
-  durable: new DirDurableStore(durableDir),
+  durable: SLOW_PUT_MS > 0 ? new SlowImages(new DirDurableStore(durableDir), SLOW_PUT_MS) : new DirDurableStore(durableDir),
   ttlMs: 1_500,
   marginMs: 400,
   autoRenew: true,
@@ -107,8 +127,48 @@ while (!stopping) {
   await sleep(4)
 }
 
+/**
+ * The long-lived consumer. Inside a `runAsync` bracket it writes through the ledger for a while, which the drain has to
+ * wait for and the final image has to hold; once the bracket is over it tries the view again, which has to be refused
+ * as soon as the image is being taken. Every acknowledged write is logged like the loop's own, so the verification
+ * counts them the same way.
+ */
+async function drainingWriter(seat: Seat): Promise<void> {
+  const handle = seat.handle as TenantHandle
+  const note = (entry: Record<string, unknown>): void => record({ ...entry, tenant: seat.label, epoch: seat.epoch, via: 'view' })
+  const until = Date.now() + DRAIN_WRITER_MS
+  try {
+    await handle.runAsync(async (ledger) => {
+      while (Date.now() < until) {
+        const n = seat.next
+        ledger.insertEvent({ actor: 'drill', kind: 'tenant-state.drill', payload: { n }, idemKey: `${seat.label}:${seat.epoch}:${n}` })
+        note({ t: 'ack', n, at: Date.now() })
+        seat.next += 1
+        await sleep(3)
+      }
+    })
+  } catch (error) {
+    note({ t: 'refused', n: seat.next, code: (error as { code?: string }).code ?? String(error) })
+    return
+  }
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const n = seat.next
+    try {
+      handle.ledger.insertEvent({ actor: 'drill', kind: 'tenant-state.drill', payload: { n }, idemKey: `${seat.label}:${seat.epoch}:${n}` })
+      note({ t: 'ack', n, at: Date.now() })
+      seat.next += 1
+    } catch (error) {
+      note({ t: 'refused', n, code: (error as { code?: string }).code ?? String(error) })
+      return
+    }
+    await sleep(2)
+  }
+}
+
 record({ t: 'draining' })
+const writers = seats.filter(seat => seat.handle?.isOpen()).map(seat => drainingWriter(seat))
 const failed = await router.close()
+await Promise.all(writers)
 record({ t: 'closed', failed })
 closeSync(log)
 process.exit(0)

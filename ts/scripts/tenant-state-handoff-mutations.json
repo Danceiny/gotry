@@ -6,22 +6,22 @@
       "id": "J1",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "the view stays open while the final image is taken",
-      "find": "      this.state = 'flushing'\n      await this.snapshot()",
-      "replace": "      await this.snapshot()"
+      "find": "      this.setState('flushing')\n      await this.snapshot()",
+      "replace": "      await this.snapshot()\n      this.setState('flushing')"
     },
     {
       "id": "J2",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "the closed state of the view is not checked",
-      "find": "    this.deps.lease.assertHeld()\n    if (this.state === 'flushing') throw new TenantDrainingError(this.deps.key)\n",
-      "replace": "    this.deps.lease.assertHeld()\n"
+      "find": "    if (this.state !== 'serving' && this.state !== 'draining') throw new TenantDrainingError(this.deps.key)\n  }\n\n  private setState",
+      "replace": "  }\n\n  private setState"
     },
     {
       "id": "J3",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "renewals stop when a handoff begins",
-      "find": "    this.stopSnapshotTimer()\n    try {\n      await this.idle()",
-      "replace": "    this.stopTimers()\n    try {\n      await this.idle()"
+      "find": "    this.stopSnapshotTimer()\n    try {\n      const drained = await this.drain()",
+      "replace": "    this.stopTimers()\n    try {\n      const drained = await this.drain()"
     },
     {
       "id": "J4",
@@ -34,14 +34,14 @@
       "id": "J5",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "forget does not wait for an upload under way",
-      "find": "    await this.snapshotTail.catch(() => undefined)\n    const outcome = await forgetTenant(this.deps.context)",
-      "replace": "    const outcome = await forgetTenant(this.deps.context)"
+      "find": "      await this.snapshotTail.catch(() => undefined)\n      const outcome = await forgetTenant(this.deps.context)",
+      "replace": "      const outcome = await forgetTenant(this.deps.context)"
     },
     {
       "id": "J6",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "a snapshot may start on a closed handle",
-      "find": "    if (this.state === 'closed') throw new TenantDrainingError(this.deps.key)\n    try {\n      const manifest = await publishSnapshot",
+      "find": "    if (this.state === 'closed' || this.state === 'forgetting') throw new TenantDrainingError(this.deps.key)\n    try {\n      const manifest = await publishSnapshot",
       "replace": "    try {\n      const manifest = await publishSnapshot"
     },
     {
@@ -61,9 +61,9 @@
     {
       "id": "J9",
       "file": "src/tenant-state/tenant-router.ts",
-      "note": "a second renewal chain starts when service resumes",
-      "find": "if (!this.deps.autoRenew || this.state === 'closed' || this.renewTimer) return",
-      "replace": "if (!this.deps.autoRenew || this.state === 'closed') return"
+      "note": "a second renewal chain starts when service resumes after a failed flush",
+      "find": "this.state === 'closed' || this.renewTimer || this.renewTicking) return",
+      "replace": "this.state === 'closed' || this.renewTicking) return"
     },
     {
       "id": "J10",
@@ -76,15 +76,15 @@
       "id": "J11",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "a handoff overtaken by an abandon flushes anyway",
-      "find": "      if (this.state !== 'draining') throw new TenantDrainingError(this.deps.key)\n",
+      "find": "      if (this.phaseNow() !== 'draining') throw new TenantDrainingError(this.deps.key)\n",
       "replace": ""
     },
     {
       "id": "J12",
       "file": "src/tenant-state/tenant-router.ts",
       "note": "a closed handle is brought back after a failed flush",
-      "find": "      else if (this.isDraining()) {\n        this.state = 'serving'",
-      "replace": "      else {\n        this.state = 'serving'"
+      "find": "      else if (this.isDraining()) {\n        this.setState('serving')",
+      "replace": "      else {\n        this.setState('serving')"
     },
     {
       "id": "J13",
@@ -92,6 +92,146 @@
       "note": "a flush that landed after the lease lapsed is reported as published",
       "find": "    lease.assertHeld()\n    return manifest",
       "replace": "    return manifest"
+    },
+    {
+      "id": "J14",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a drain has no deadline: the timer does nothing",
+      "find": "const timer = setTimeout(() => end('timeout'), this.deps.drainTimeoutMs)",
+      "replace": "const timer = setTimeout(() => undefined, this.deps.drainTimeoutMs)"
+    },
+    {
+      "id": "J15",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a drain that ran out is not told apart from a draining refusal",
+      "find": "        throw new DrainTimeoutError(this.deps.key, this.inFlight, this.deps.drainTimeoutMs)",
+      "replace": "        throw new TenantDrainingError(this.deps.key)"
+    },
+    {
+      "id": "J16",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the operator is not told that a drain ran out",
+      "find": "        this.emit({ type: 'drain_timeout', key: this.deps.key, epoch: this.epoch, inFlight: this.inFlight })\n",
+      "replace": ""
+    },
+    {
+      "id": "J17",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "closing the tenant does not end the wait of a handoff that is draining",
+      "find": "    if (next === 'closed' || next === 'forgetting') this.wakeIdleWaiters()\n",
+      "replace": ""
+    },
+    {
+      "id": "J18",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "close() hands tenants off one at a time, so a stuck one holds the rest",
+      "find": "{ length: Math.min(this.options.closeConcurrency ?? DEFAULT_CLOSE_CONCURRENCY, queue.length) }",
+      "replace": "{ length: Math.min(1, queue.length) }"
+    },
+    {
+      "id": "J19",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a handoff releases the lease and claims a flush although a forget took the tenant meanwhile",
+      "find": "      if (this.phaseNow() !== 'flushing') throw new TenantDrainingError(this.deps.key)\n",
+      "replace": ""
+    },
+    {
+      "id": "J20",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "forget stops renewing while it waits for an upload",
+      "find": "    this.stopSnapshotTimer()\n    this.setState('forgetting')",
+      "replace": "    this.stopTimers()\n    this.setState('forgetting')"
+    },
+    {
+      "id": "J21",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "an abandon that arrives during a forget releases the lease from under it",
+      "find": "    if (this.state === 'closed' || this.state === 'forgetting') return\n    this.stopTimers()",
+      "replace": "    if (this.state === 'closed') return\n    this.stopTimers()"
+    },
+    {
+      "id": "J22",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a second forget runs beside the first",
+      "find": "    if (this.state === 'forgetting') throw new TenantDrainingError(this.deps.key)\n    // Nothing is served from here on",
+      "replace": "    // Nothing is served from here on"
+    },
+    {
+      "id": "J23",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a call on a handle that is closed but still holds the lease reaches a closed database",
+      "find": "    if (this.state === 'closed') this.deps.lease.assertHeld()\n    throw new TenantDrainingError(this.deps.key)\n  }",
+      "replace": "    if (this.state === 'closed') this.deps.lease.assertHeld()\n  }"
+    },
+    {
+      "id": "J24",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a callback that returns a promise is accepted by run()",
+      "find": "    if (isThenable(result)) {",
+      "replace": "    if (false) {"
+    },
+    {
+      "id": "J25",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the promise that run() leaves behind can become an unhandled rejection",
+      "find": "      void Promise.resolve(result).catch(() => undefined)\n",
+      "replace": ""
+    },
+    {
+      "id": "J26",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a consumer can close the router's own connection through the view",
+      "find": "      if (property === 'close') return () => guarded\n",
+      "replace": ""
+    },
+    {
+      "id": "J27",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the raw database comes out through a property descriptor",
+      "find": "    getOwnPropertyDescriptor(target, property) {\n      const descriptor = Reflect.getOwnPropertyDescriptor(target, property)\n      if (property === 'db' && descriptor && 'value' in descriptor) return { ...descriptor, value: guardedDatabase(descriptor.value as Database.Database, assertHeld) }\n      return descriptor\n    },\n",
+      "replace": ""
+    },
+    {
+      "id": "J28",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the view can be rewritten by a consumer",
+      "find": "    set: () => false,\n",
+      "replace": ""
+    },
+    {
+      "id": "J29",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the renewal flag is never cleared, so renewals stop for good after the first one",
+      "find": "    } finally {\n      this.renewTicking = false\n    }",
+      "replace": "    } finally {\n    }"
+    },
+    {
+      "id": "J30",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a drain that ran out does not resume service",
+      "find": "      else if (this.isDraining()) {\n        this.setState('serving')",
+      "replace": "      else if (this.isDraining() && !(error instanceof DrainTimeoutError)) {\n        this.setState('serving')"
+    },
+    {
+      "id": "J31",
+      "file": "src/tenant-state/epoch-copies.ts",
+      "note": "the dead epochs of a forgotten tenant are not deleted when it is next opened",
+      "find": "  if (lease.forgottenAtEpoch > 0) await sweepMaskedCopies(durable, key, lease.forgottenAtEpoch).catch(() => 0)\n",
+      "replace": ""
+    },
+    {
+      "id": "J32",
+      "file": "src/tenant-state/epoch-copies.ts",
+      "note": "forgetting deletes the directory the caller names, whichever it is",
+      "find": "  assertOwnTenantRoot(context)\n  return key",
+      "replace": "  return key"
+    },
+    {
+      "id": "J33",
+      "file": "src/tenant-state/durable-store.ts",
+      "note": "a delete by a prefix that stops inside a name takes the neighbours too",
+      "find": "    assertDurableDeletePrefix(prefix)\n    const keys = await this.list(prefix)",
+      "replace": "    const keys = await this.list(prefix)"
     }
   ]
 }
