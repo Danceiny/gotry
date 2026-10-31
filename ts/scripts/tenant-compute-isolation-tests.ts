@@ -61,7 +61,9 @@ process.setMaxListeners(100)
 const FIXTURE = fileURLToPath(new URL('./fixtures/tenant-runaway-worker-fixture.mjs', import.meta.url))
 
 let passed = 0
+const only = process.env.GOTRY_TEST_ONLY
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
+  if (only && !label.startsWith(only)) return
   await assertion()
   passed += 1
   console.log(`  ok - ${label}`)
@@ -73,12 +75,13 @@ function row(pid: number, ppid: number, rssMiB: number, cpuSeconds = 0): Process
 
 const ME = 1
 
-function harness(table: () => ProcessRow[] | Promise<ProcessRow[]>) {
+function harness(table: () => ProcessRow[] | Promise<ProcessRow[]>, extra: { maxBlindTicks?: number; tableTimeoutMs?: number } = {}) {
   const killed: number[][] = []
   const faults: unknown[] = []
   const order: string[] = []
   const governor = new ProcessTreeGovernor({
     intervalMs: 3_600_000,
+    ...extra,
     table: async () => table(),
     kill: (pids) => { order.push('killed'); killed.push([...pids].sort((a, b) => a - b)) },
     onFault: (error) => { faults.push(error) },
@@ -95,6 +98,16 @@ async function waitFor(condition: () => boolean, timeoutMs: number, label: strin
   while (!condition()) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for: ${label}`)
     await sleep(20)
+  }
+}
+
+/** A call that must come back: when it does not, the check fails with this message instead of the suite stalling. */
+async function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not come back within ${ms} ms`)), ms) })])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -286,6 +299,48 @@ await check('G15 a governor that cannot see the process table says so: it must r
   await assert.rejects(empty.governor.probe(), ProcessTableUnavailableError)
 })
 
+await check('G16 a sampler that cannot see fails closed: a watched root missing for N ticks in a row, or a table that fails or hangs, is a breach of its own kind', async () => {
+  let visible = false
+  const missing = harness(() => (visible ? [row(100, ME, 1)] : [row(200, ME, 1)]), { maxBlindTicks: 3 })
+  const told: Array<{ kind: string; limit: number; observed: number }> = []
+  missing.governor.watch({ rootPid: 100, parentPid: ME }, { maxRssBytes: 100 * MIB }, (breach) => told.push(breach))
+  await missing.governor.tick()
+  await missing.governor.tick()
+  visible = true
+  await missing.governor.tick()
+  visible = false
+  await missing.governor.tick()
+  await missing.governor.tick()
+  assert.deepEqual(told, [], 'two blind ticks, a good one, then two more: the count starts over')
+  await missing.governor.tick()
+  assert.deepEqual(told, [{ kind: 'blind', limit: 3, observed: 3 }])
+  assert.equal(missing.governor.size, 0, 'the watch is over once it has failed')
+  assert.deepEqual(missing.killed, [[]], 'nothing could be seen, so nothing is killed from here: the owner is told and tears its tree down')
+
+  let failing = true
+  const broken = harness(() => { if (failing) throw new Error('ps failed'); return [row(100, ME, 1)] }, { maxBlindTicks: 2 })
+  const brokenTold: string[] = []
+  broken.governor.watch({ rootPid: 100, parentPid: ME }, { maxRssBytes: 100 * MIB }, (breach) => brokenTold.push(breach.kind))
+  await broken.governor.tick()
+  failing = false
+  await broken.governor.tick()
+  failing = true
+  await broken.governor.tick()
+  assert.deepEqual(brokenTold, [], 'a read that works in between resets the count')
+  await broken.governor.tick()
+  assert.deepEqual(brokenTold, ['blind'])
+
+  const hung = harness(() => new Promise<ProcessRow[]>(() => undefined), { maxBlindTicks: 2, tableTimeoutMs: 20 })
+  const hungTold: string[] = []
+  hung.governor.watch({ rootPid: 100, parentPid: ME }, { maxRssBytes: 100 * MIB }, (breach) => hungTold.push(breach.kind))
+  await within(hung.governor.tick(), 2_000, 'a tick over a table that never answers')
+  await within(hung.governor.tick(), 2_000, 'a second tick over a table that never answers')
+  assert.deepEqual(hungTold, ['blind'], 'a table that never settles is raced against a timer, so ticks go on and the count rises')
+  await within(assert.rejects(hung.governor.probe(), ProcessTableUnavailableError, 'and the probe is raced the same way: a table that never answers is not "can see"'), 2_000, 'the probe of a table that never answers')
+  assert.throws(() => new ProcessTreeGovernor({ maxBlindTicks: 0 }), RangeError)
+  assert.throws(() => new ProcessTreeGovernor({ tableTimeoutMs: 0 }), RangeError)
+})
+
 // ---- P: ports with real processes -----------------------------------------------------------
 
 console.log('P  ports (real processes)')
@@ -313,7 +368,7 @@ await check('P1 a worker that leaks off-heap memory is killed once its tree is o
   const port = portOf({ env: worker.env, limits: { maxRssBytes: 300 * MIB, governor: fast } })
   const pid = await readPid(worker.read)
   const started = Date.now()
-  const error = await rejection(port.run('memory', { sessionId: 'p1' }))
+  const error = await within(rejection(port.run('memory', { sessionId: 'p1' })), 30_000, 'a run whose worker leaks past its limit')
   assert.ok(error instanceof ManagedDshResourceLimitError, `expected a resource-limit error, got ${String(error)}`)
   assert.equal(error.breach.kind, 'memory')
   assert.equal(error.breach.limit, 300 * MIB)
@@ -341,7 +396,7 @@ await check('P3 a worker that spins is killed once its tree is over the CPU limi
   const worker = pidFileEnv('cpu')
   const port = portOf({ env: worker.env, limits: { maxCpuSeconds: 1, governor: fast } })
   const pid = await readPid(worker.read)
-  const error = await rejection(port.run('cpu', { sessionId: 'p3' }))
+  const error = await within(rejection(port.run('cpu', { sessionId: 'p3' })), 30_000, 'a run whose worker spins past its limit')
   assert.ok(error instanceof ManagedDshResourceLimitError, `expected a resource-limit error, got ${String(error)}`)
   assert.equal(error.breach.kind, 'cpu')
   await waitFor(() => !alive(pid), 5_000, 'the worker to be gone')
@@ -371,7 +426,7 @@ await check('P5 a line that never ends is cut off at the cap: typed, and this pr
   const port = portOf({ env: worker.env, limits: { maxLineChars: MIB } })
   const pid = await readPid(worker.read)
   const before = process.memoryUsage().rss
-  const error = await rejection(port.run('flood', { sessionId: 'p5' }))
+  const error = await within(rejection(port.run('flood', { sessionId: 'p5' })), 30_000, 'a run whose worker writes a line that never ends')
   assert.ok(error instanceof ManagedDshResourceLimitError, `expected a resource-limit error, got ${String(error)}`)
   assert.equal(error.breach.kind, 'output')
   assert.equal(error.breach.limit, MIB)
@@ -395,7 +450,7 @@ await check('P6 a runaway does not move its neighbours: another port answers pro
     assert.equal(result.finalResponse, 'ok')
   }
   assert.ok(Math.max(...latencies) < 10_000, `the neighbour answered in ${latencies.join(', ')} ms while the other leaked`)
-  assert.ok(await runaway instanceof ManagedDshResourceLimitError)
+  assert.ok(await within(runaway, 30_000, 'the runaway worker\'s run') instanceof ManagedDshResourceLimitError)
   assert.equal((await neighbour.run('ok', { sessionId: 'p6-after' })).finalResponse, 'ok', 'the neighbour is still served after the kill')
 })
 
@@ -444,6 +499,18 @@ await check('P10 a governor that was asked for and never attached says so; one t
   await sleep(400)
   assert.deepEqual(heapOnly, [], 'a heap ceiling needs no sampler, so nothing is missing')
   assert.throws(() => new ManagedDshRunPort({ workerPath: FIXTURE, limits: { attachDeadlineMs: 0 } }), RangeError)
+})
+
+await check('P11 a worker that reports a process that is not its own is not left ungoverned: the port fails with a typed reason and the worker is torn down', async () => {
+  const worker = pidFileEnv('liar', { TENANT_FIXTURE_LIE_PID: '1' })
+  const watcher = new ProcessTreeGovernor({ intervalMs: 50, maxBlindTicks: 3 })
+  const port = portOf({ env: worker.env, limits: { maxRssBytes: 1_000 * MIB, governor: watcher } })
+  const pid = await readPid(worker.read)
+  await waitFor(() => !alive(pid), 10_000, 'the worker whose tree could not be seen to be torn down')
+  const error = await rejection(port.run('ok', { sessionId: 'p11' }))
+  assert.ok(error instanceof ManagedDshResourceLimitError, `expected a resource-limit error, got ${String(error)}`)
+  assert.equal(error.breach.kind, 'blind')
+  watcher.close()
 })
 
 await check('P9 the planner hands its limits to the real worker: the ceiling is on its command line and its tree is watched until the port closes', async () => {
@@ -584,6 +651,21 @@ await check('D4 limits that need a sampler are checked before the first child st
     ProcessTableUnavailableError,
   )
   await provider.close()
+})
+
+await check('D5 every real port checks that the sampler can see before it starts a child, not only the first tenant: a blind sampler starts nothing', async () => {
+  const blind = new ProcessTreeGovernor({ table: async () => [] })
+  const children = (): number => execFileSync('/bin/ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' } })
+    .split('\n').filter((line) => new RegExp(`^\\s*\\d+\\s+${process.pid}\\s*$`).test(line)).length
+  const before = children()
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(createRealRunPort({
+      stateRoot: mkdtempSync(join(scratch, 'blind-port-')),
+      env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'unused-key', DEEPSEEK_BASE_URL: 'http://127.0.0.1:9/v1', DEEPSEEK_PROVIDER: 'gateway-chat', DEEPSEEK_MODEL: 'probe-model' },
+      resourceLimits: { maxRssBytes: 1_000 * MIB, governor: blind },
+    }), ProcessTableUnavailableError)
+  }
+  assert.equal(children(), before, 'no child was started')
 })
 
 await check('D3 the tenant planner provider hands every tenant the default ceilings, and a deployment can set its own', async () => {

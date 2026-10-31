@@ -49,10 +49,19 @@ export class ManagedDshResourceLimitError extends Error {
   readonly breach: ManagedDshResourceBreach
 
   constructor(breach: ManagedDshResourceBreach) {
-    super(`managed DSH worker exceeded its ${breach.kind} limit`)
+    super(breach.kind === 'blind' ? 'managed DSH worker tree could not be observed' : `managed DSH worker exceeded its ${breach.kind} limit`)
     this.name = 'ManagedDshResourceLimitError'
     this.breach = breach
   }
+}
+
+/**
+ * Proves that the sampler can see before a child is started: with a tree limit set, a process table that cannot be read
+ * would let the limit govern nothing, so it fails first and by name. A port with no tree limit has nothing to check.
+ */
+export async function assertManagedDshLimitsEnforceable(limits: ManagedDshResourceLimits): Promise<void> {
+  if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return
+  await (limits.governor ?? sharedProcessTreeGovernor()).probe()
 }
 
 function assertPositiveLimit(name: string, value: number | undefined): void {

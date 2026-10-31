@@ -28,7 +28,7 @@ import {
   validateBookingIntentProjection,
   bookingSurfaceSchema,
 } from './validation.ts'
-import { createManagedDshRunPort, ManagedDshResourceLimitError, type ManagedDshResourceLimits } from './managed-dsh-run-port.ts'
+import { assertManagedDshLimitsEnforceable, createManagedDshRunPort, ManagedDshResourceLimitError, type ManagedDshResourceLimits } from './managed-dsh-run-port.ts'
 import {
   BOOKING_INTENT_SCHEMA_VERSION,
   BOOKING_INTENT_TARGET_ACTION,
@@ -404,6 +404,8 @@ export function plannerChildEnvironment(
 export async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Promise<DshPlannerRunPort> {
   const resolved = resolveRealRunPortConfig(options)
   const { provider, model, modelSource, reasoningEffort, maxTokens } = resolved
+  // Every real port, not only the first one of a process, starts a child only where the tree limits can be enforced.
+  if (options.resourceLimits) await assertManagedDshLimitsEnforceable(options.resourceLimits)
   // Name the resolved route on every real port. A deployment that forgot
   // DEEPSEEK_MODEL used to be indistinguishable from one that set it, and the
   // substituted model is exactly what a later diagnosis needs to see.

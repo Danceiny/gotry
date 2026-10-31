@@ -82,6 +82,12 @@ export interface LlmBrokerOptions {
   readonly upstreamTimeoutMs?: number
   /** Paths the child may POST to, relative to its base URL. Default `['/chat/completions']`. */
   readonly allowedPaths?: readonly string[]
+  /** Most simultaneous connections to the port a child is handed. Default 256: a child has one request at a time. */
+  readonly maxConnections?: number
+  /** Time a connection may take, from the moment it is accepted, to send its request headers before it is dropped. Default 10 s. */
+  readonly headersTimeoutMs?: number
+  /** How often connection timeouts are enforced. Default 5 s; the suites make it short. */
+  readonly connectionsCheckingIntervalMs?: number
   /** Clock, injected by the suites. */
   readonly now?: () => number
   /** Transport, injected by the suites. Default: global fetch. */
@@ -93,7 +99,9 @@ const DEFAULT_MAX_REQUESTS = 64
 const DEFAULT_MAX_CONCURRENT = 4
 const DEFAULT_MAX_REQUEST_BYTES = 4 * 1024 * 1024
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 60_000
-const MAX_ERROR_BODY_BYTES = 16 * 1024
+const DEFAULT_MAX_CONNECTIONS = 256
+const DEFAULT_HEADERS_TIMEOUT_MS = 10_000
+const DEFAULT_CONNECTIONS_CHECKING_INTERVAL_MS = 5_000
 const MAX_USAGE_LINE_BYTES = 1024 * 1024
 const TOKEN_PREFIX = 'gtk-'
 
@@ -101,6 +109,8 @@ const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 interface TicketRecord {
   readonly onUsage: ((report: LlmUsageReport) => void) | undefined
+  /** What this ticket has under way, so revoking it can stop all of it. */
+  readonly inflight: Set<AbortController>
   expiresAtMs: number
   requests: number
   inFlight: number
@@ -127,6 +137,19 @@ function jsonError(res: ServerResponse, status: number, code: string, headers: R
 function upstreamUrlFor(base: URL, path: string): string {
   const root = base.href.replace(/\/+$/u, '')
   return base.pathname.replace(/\/+$/u, '').endsWith('/v1') ? `${root}${path}` : `${root}/v1${path}`
+}
+
+/**
+ * What a child is told when the upstream answers with an error. The upstream's own body is never relayed: an upstream
+ * that echoes the credential it was sent (a misconfigured gateway does) would hand it to the very process the broker
+ * keeps it from. The status and a closed classification are all the adapter needs.
+ */
+function upstreamErrorBody(status: number): string {
+  const type = status === 401 || status === 403 ? 'auth'
+    : status === 429 ? 'rate_limit'
+      : status === 408 || status >= 500 ? 'server'
+        : 'invalid_request'
+  return JSON.stringify({ error: { code: `upstream_${status}`, type } })
 }
 
 /** Resolves when the response drains or its connection closes, whichever is first, and leaves no listener behind. */
@@ -222,6 +245,9 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
   private readonly maxRequestBytes: number
   private readonly upstreamTimeoutMs: number
   private readonly allowedPaths: ReadonlySet<string>
+  private readonly maxConnections: number
+  private readonly headersTimeoutMs: number
+  private readonly connectionsCheckingIntervalMs: number
   private readonly now: () => number
   private readonly transport: typeof fetch
   private readonly tickets = new Map<string, TicketRecord>()
@@ -251,6 +277,9 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
       if (!/^\/[A-Za-z0-9._~/-]*$/u.test(path) || path.includes('..') || path.includes('//')) throw new RangeError(`allowed path ${JSON.stringify(path)} is not a plain path`)
     }
     this.allowedPaths = new Set(paths)
+    this.maxConnections = positive('maxConnections', options.maxConnections ?? DEFAULT_MAX_CONNECTIONS)
+    this.headersTimeoutMs = positive('headersTimeoutMs', options.headersTimeoutMs ?? DEFAULT_HEADERS_TIMEOUT_MS)
+    this.connectionsCheckingIntervalMs = positive('connectionsCheckingIntervalMs', options.connectionsCheckingIntervalMs ?? DEFAULT_CONNECTIONS_CHECKING_INTERVAL_MS)
     this.now = options.now ?? Date.now
     this.transport = options.fetch ?? fetch
   }
@@ -258,7 +287,11 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
   /** Starts listening on a loopback ephemeral port. Tickets can be issued once this resolves. */
   async start(): Promise<void> {
     if (this.server || this.closed) throw new Error('llm_broker_already_started')
-    const server = createServer((req, res) => { void this.handle(req, res) })
+    // This port is handed to a process that model output steers, in the same process as everything else on the replica:
+    // it must not be a way to use up its descriptors. Connections are capped, and one that does not send a request is dropped
+    // (Node starts the headers clock when a connection is accepted, not at its first byte; the suite checks it on whatever Node runs it).
+    const server = createServer({ headersTimeout: this.headersTimeoutMs, requestTimeout: Math.max(60_000, this.headersTimeoutMs), connectionsCheckingInterval: this.connectionsCheckingIntervalMs }, (req, res) => { void this.handle(req, res) })
+    server.maxConnections = this.maxConnections
     // A planner run is long-lived, but nothing here should linger on an idle connection.
     server.keepAliveTimeout = 5_000
     server.listen(0, '127.0.0.1')
@@ -274,7 +307,7 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
     const ttlMs = positive('ttlMs', options.ttlMs ?? this.ttlMs)
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
     const key = digest(token)
-    const record: TicketRecord = { onUsage: options.onUsage, expiresAtMs: this.now() + ttlMs, requests: 0, inFlight: 0, revoked: false }
+    const record: TicketRecord = { onUsage: options.onUsage, inflight: new Set(), expiresAtMs: this.now() + ttlMs, requests: 0, inFlight: 0, revoked: false }
     this.tickets.set(key, record)
     this.issued += 1
     return {
@@ -284,6 +317,8 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
       revoke: () => {
         record.revoked = true
         this.tickets.delete(key)
+        // A revoked ticket also stops what it has under way: a stream already open would otherwise outlive it.
+        for (const controller of [...record.inflight]) controller.abort('revoked')
       },
     }
   }
@@ -373,7 +408,16 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
 
   private async forward(req: IncomingMessage, res: ServerResponse, record: TicketRecord, path: string, body: Buffer): Promise<void> {
     const abort = new AbortController()
-    res.on('close', () => { if (!res.writableFinished) abort.abort() })
+    record.inflight.add(abort)
+    try {
+      await this.relay(req, res, record, path, body, abort)
+    } finally {
+      record.inflight.delete(abort)
+    }
+  }
+
+  private async relay(req: IncomingMessage, res: ServerResponse, record: TicketRecord, path: string, body: Buffer, abort: AbortController): Promise<void> {
+    res.on('close', () => { if (!res.writableFinished) abort.abort('client') })
     const headers: Record<string, string> = {
       authorization: `Bearer ${this.upstreamKey}`,
       'content-type': typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : 'application/json',
@@ -387,14 +431,16 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
       if (typeof parsed.model === 'string') model = parsed.model
     } catch { /* an unparseable body is the upstream's to refuse; it is simply unmetered here */ }
 
-    const timer = setTimeout(() => abort.abort(), this.upstreamTimeoutMs)
+    const timer = setTimeout(() => abort.abort('timeout'), this.upstreamTimeoutMs)
     let response: Response
     try {
       response = await this.transport(upstreamUrlFor(this.upstream, path), { method: 'POST', headers, body: text, redirect: 'manual', signal: abort.signal })
     } catch {
       this.upstreamFailures += 1
       if (res.writableEnded || res.destroyed) return
-      jsonError(res, abort.signal.aborted ? 504 : 502, abort.signal.aborted ? 'upstream_timeout' : 'upstream_unreachable')
+      const reason = abort.signal.reason
+      if (reason === 'revoked') jsonError(res, 401, 'ticket_invalid')
+      else jsonError(res, abort.signal.aborted ? 504 : 502, abort.signal.aborted ? 'upstream_timeout' : 'upstream_unreachable')
       return
     } finally {
       clearTimeout(timer)
@@ -411,10 +457,19 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
     const outHeaders: Record<string, string> = { 'content-type': contentType, 'cache-control': 'no-store' }
     const retryAfter = response.headers.get('retry-after')
     if (retryAfter !== null && /^\d{1,6}$/u.test(retryAfter)) outHeaders['retry-after'] = retryAfter
+    if (response.status < 200 || response.status >= 300) {
+      // Never the upstream's own words (see upstreamErrorBody); its body is not read.
+      await response.body?.cancel().catch(() => undefined)
+      const mapped = upstreamErrorBody(response.status)
+      const errorHeaders: Record<string, string> = { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(mapped)), 'cache-control': 'no-store' }
+      if (outHeaders['retry-after'] !== undefined) errorHeaders['retry-after'] = outHeaders['retry-after']
+      res.writeHead(response.status, errorHeaders)
+      res.end(mapped)
+      this.forwarded += 1
+      return
+    }
     res.writeHead(response.status, outHeaders)
-    const ok = response.status >= 200 && response.status < 300
     const tap = new UsageTap(contentType)
-    let relayed = 0
     // Measured spend is reported once, and before the child can see that the stream is over: at the `[DONE]` frame, which
     // is where the chat-completions adapter stops reading (it then cancels the request, whatever the upstream still does),
     // or, for a body with no such frame, when the body has ended.
@@ -434,14 +489,6 @@ export class LlmCredentialBroker implements LlmTicketIssuer {
         for (;;) {
           const { done, value } = await reader.read()
           if (done) break
-          if (!ok) {
-            const room = MAX_ERROR_BODY_BYTES - relayed
-            if (room <= 0) { await reader.cancel().catch(() => undefined); break }
-            const piece = value.length > room ? value.subarray(0, room) : value
-            relayed += piece.length
-            res.write(piece)
-            continue
-          }
           tap.push(value)
           if (tap.sawDone) meter()
           if (!res.write(value)) {

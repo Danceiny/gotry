@@ -17,6 +17,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { connect, type Socket } from 'node:net'
 import { request as httpRequest, createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +35,9 @@ import { MODEL, ROOMY, makeFleet, makePlanner, makeService, tenantOf, userTurn }
 const REAL_KEY = 'sk-REAL-upstream-key-must-never-reach-a-child'
 
 let passed = 0
+const only = process.env.GOTRY_TEST_ONLY
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
+  if (only && !label.startsWith(only)) return
   await assertion()
   passed += 1
   console.log(`  ok - ${label}`)
@@ -288,7 +291,7 @@ await check('B9 a redirect is a failure: the key is never sent to wherever it po
   assert.equal(elsewhere.seen.length, 0)
 })
 
-await check('B10 the upstream\'s failures reach the child as failures: relayed errors, unreachable, silent, and cut mid-stream', async () => {
+await check('B10 the upstream\'s failures reach the child as failures: mapped errors, unreachable, silent, and cut mid-stream; and none of its own headers reach the child', async () => {
   const errors = await setup((_req, res) => { res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '7', 'set-cookie': 'x=1', 'x-internal': 'hide' }); res.end('{"error":"slow down"}') })
   const t1 = errors.broker.issue()
   const relayed = await chat(t1.baseUrl, t1.token)
@@ -296,11 +299,21 @@ await check('B10 the upstream\'s failures reach the child as failures: relayed e
   assert.equal(relayed.headers.get('retry-after'), '7')
   assert.equal(relayed.headers.get('set-cookie'), null)
   assert.equal(relayed.headers.get('x-internal'), null)
-  assert.match(relayed.text, /slow down/)
+  assert.deepEqual(JSON.parse(relayed.text), { error: { code: 'upstream_429', type: 'rate_limit' } }, 'the upstream\'s words are replaced by a mapped body')
+
+  const served = await setup((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'set-cookie': 'sid=abc', 'x-internal': 'hide', 'x-upstream-token': 'secret-in-a-header' })
+    res.end(sseFrames({ choices: [{ delta: { content: 'hi' } }] }))
+  })
+  const t0 = served.broker.issue()
+  const success = await chat(t0.baseUrl, t0.token)
+  assert.equal(success.status, 200)
+  assert.equal(success.headers.get('content-type'), 'text/event-stream')
+  for (const name of ['set-cookie', 'x-internal', 'x-upstream-token']) assert.equal(success.headers.get(name), null, `${name} from the upstream does not reach the child`)
 
   const big = await setup((_req, res) => { res.writeHead(500, { 'content-type': 'text/plain' }); res.end('e'.repeat(200_000)) })
   const t2 = big.broker.issue()
-  assert.ok((await chat(t2.baseUrl, t2.token)).text.length <= 16 * 1024, 'an error body is relayed only up to a bound')
+  assert.ok((await chat(t2.baseUrl, t2.token)).text.length < 200, 'an error body is never relayed, so it is never large')
 
   const gone = await setup()
   const t3 = gone.broker.issue()
@@ -327,6 +340,91 @@ await check('B10 the upstream\'s failures reach the child as failures: relayed e
   const response = await fetch(`${t5.baseUrl}/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${t5.token}`, 'content-type': 'application/json' }, body: '{"model":"m"}' })
   await assert.rejects(response.text(), () => true, 'a stream cut short is an error on the child\'s side, not a stream that ends cleanly')
   assert.ok(cut.broker.stats().upstreamFailures >= 1)
+})
+
+await check('B19 an upstream error is never relayed: one that echoes the credential it was sent hands the child a mapped body, with the status and retry-after kept', async () => {
+  const { up, broker } = await setup((req, res) => {
+    res.writeHead(401, { 'content-type': 'application/json', 'retry-after': '3', 'x-echo': String(req.headers.authorization) })
+    res.end(JSON.stringify({ error: { message: `Incorrect API key provided: ${req.headers.authorization}`, received: req.headers.authorization } }))
+  })
+  const ticket = broker.issue()
+  const reply = await chat(ticket.baseUrl, ticket.token)
+  assert.equal(up.seen.length, 1)
+  assert.equal(up.seen[0]!.headers.authorization, `Bearer ${REAL_KEY}`, 'control: the upstream did receive the real key')
+  assert.equal(reply.status, 401)
+  assert.ok(!reply.text.includes(REAL_KEY) && !JSON.stringify([...reply.headers]).includes(REAL_KEY), 'neither the body nor a header carries the key')
+  assert.deepEqual(JSON.parse(reply.text), { error: { code: 'upstream_401', type: 'auth' } })
+  assert.equal(reply.headers.get('retry-after'), '3')
+  for (const [status, type] of [[400, 'invalid_request'], [403, 'auth'], [404, 'invalid_request'], [408, 'server'], [413, 'invalid_request'], [422, 'invalid_request'], [429, 'rate_limit'], [500, 'server'], [503, 'server']] as const) {
+    const each = await setup((_req, res) => { res.writeHead(status, { 'content-type': 'text/plain' }); res.end(`secret ${REAL_KEY}`) })
+    const t = each.broker.issue()
+    const answered = await chat(t.baseUrl, t.token)
+    assert.equal(answered.status, status)
+    assert.deepEqual(JSON.parse(answered.text), { error: { code: `upstream_${status}`, type } })
+  }
+})
+
+await check('B20 revoking a ticket stops what it has in flight: the stream breaks and the upstream request is cancelled', async () => {
+  let upstreamClosed!: () => void
+  const closed = new Promise<void>((resolve) => { upstreamClosed = resolve })
+  const { broker } = await setup(async (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write('data: {"choices":[{"delta":{"content":"x"}}]}\n\n')
+    res.on('close', upstreamClosed)
+  })
+  const ticket = broker.issue()
+  const response = await fetch(`${ticket.baseUrl}/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${ticket.token}`, 'content-type': 'application/json' }, body: '{"model":"m"}' })
+  const reader = response.body!.getReader()
+  await reader.read()
+  ticket.revoke()
+  await Promise.race([closed, sleep(3_000).then(() => { throw new Error('the upstream request outlived its revoked ticket') })])
+  await assert.rejects(async () => { for (;;) { const part = await reader.read(); if (part.done) throw new Error('the stream ended cleanly') } }, /terminated|aborted|ECONNRESET|socket|fetch failed/i)
+
+  // And before the upstream has answered at all: the child is told the ticket is gone, at once, and the request upstream is cancelled.
+  let heldClosed!: () => void
+  const heldGone = new Promise<void>((resolve) => { heldClosed = resolve })
+  const held = await setup((_req, res) => { res.on('close', heldClosed) })
+  const early = held.broker.issue()
+  const pending = chat(early.baseUrl, early.token)
+  const arrival = Date.now() + 3_000
+  while (held.up.seen.length === 0 && Date.now() < arrival) await sleep(10)
+  assert.equal(held.up.seen.length, 1, 'the request reached the upstream, which holds it')
+  early.revoke()
+  const answer = await Promise.race([pending, sleep(3_000).then(() => { throw new Error('a revoked ticket still waits on the upstream') })])
+  assert.equal(answer.status, 401)
+  assert.equal(await code(answer), 'ticket_invalid')
+  await Promise.race([heldGone, sleep(3_000).then(() => { throw new Error('the held upstream request outlived its revoked ticket') })])
+})
+
+await check('B21 the port handed to a child cannot be used to exhaust this process: connections are capped and one that never sends headers is dropped', async () => {
+  // The upstream takes longer than the connection timers below: a request under way is not a connection that said nothing.
+  const { broker } = await setup(async (_req, res) => { await sleep(450); okStream(res) }, { maxConnections: 8, headersTimeoutMs: 200, connectionsCheckingIntervalMs: 50 })
+  const ticket = broker.issue()
+  const port = Number(new URL(ticket.baseUrl).port)
+  const all: Socket[] = []
+  // Forty connections, each saying `greeting` and then nothing: at most the cap are let in, and every one of those is dropped.
+  const flood = async (greeting: string | null, what: string): Promise<void> => {
+    const group: Socket[] = []
+    for (let i = 0; i < 40; i += 1) {
+      const socket = connect({ host: '127.0.0.1', port })
+      socket.on('error', () => undefined)
+      // The 408 the server answers a stalled request with has to be read before the socket can see the close behind it.
+      socket.resume()
+      if (greeting !== null) socket.write(greeting)
+      group.push(socket)
+      all.push(socket)
+    }
+    const open = (): number => group.filter((socket) => !socket.destroyed).length
+    await sleep(150)
+    assert.ok(open() <= 8, `${what}: at most the cap of connections stay open, saw ${open()}`)
+    const deadline = Date.now() + 3_000
+    while (open() > 0 && Date.now() < deadline) await sleep(25)
+    assert.equal(open(), 0, `${what}: the connections that were let in are dropped`)
+  }
+  await flood(null, 'connections that never send a byte')
+  await flood('POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n', 'requests whose headers never end')
+  for (const socket of all) socket.destroy()
+  assert.equal((await chat(ticket.baseUrl, ticket.token)).status, 200, 'and a real request, even one slower than those timers, is still served')
 })
 
 await check('B11 a child that goes away takes its upstream request with it', async () => {

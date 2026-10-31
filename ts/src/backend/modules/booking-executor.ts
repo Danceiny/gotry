@@ -154,12 +154,17 @@ export function startBookingExecutorModule(options: BookingExecutorModuleOptions
   }
 
   async function handleObserve(req: IncomingMessage, res: ServerResponse, organization: string): Promise<void> {
-    let parsed: BookingObserveRequest
+    let decoded: unknown
     try {
-      parsed = JSON.parse(await readBody(req))
+      decoded = JSON.parse(await readBody(req))
     } catch {
       sendJson(res, 400, { ok: false, error: 'body 不是 JSON' }); return
     }
+    // `null`, a number, a string or an array is JSON too; reading a field from one would throw outside any handler.
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+      sendJson(res, 400, { ok: false, error: 'body 不是 JSON 对象' }); return
+    }
+    const parsed = decoded as BookingObserveRequest
     const supplier = (parsed.supplier ?? '').trim()
     if (supplier !== 'dida-portal') {
       sendJson(res, 400, { ok: false, error: `未知供应商通道 ${supplier || '(空)'}` }); return

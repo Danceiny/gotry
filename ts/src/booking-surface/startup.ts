@@ -14,9 +14,8 @@ import {
 import { BookingCopilotTaskRuntime } from './runtime.ts'
 import { BOOKING_COPILOT_INGRESS_MODES, type BookingCopilotIngressMode, type BookingIngressBinding, type BookingIngressPrincipal } from './contracts.ts'
 import type { BookingTenancy, TenantPlannerProvider } from './tenancy.ts'
-import type { ManagedDshResourceLimits } from './managed-dsh-run-port.ts'
+import { assertManagedDshLimitsEnforceable, type ManagedDshResourceLimits } from './managed-dsh-run-port.ts'
 import type { LlmTicketIssuer, LlmTicketOptions, LlmUsageReport } from '../tenant-seam/llm-broker.ts'
-import { sharedProcessTreeGovernor } from '../tenant-seam/process-governor.ts'
 import {
   startBookingCopilotServer,
   type BookingCopilotServerHandle,
@@ -154,10 +153,7 @@ export const DEFAULT_TENANT_PLANNER_RESOURCE_LIMITS: ManagedDshResourceLimits = 
  * limits would silently govern nothing, so this fails first, with a name, before any child starts. Limits that need no
  * sampler (a heap ceiling, a line cap) have nothing to check.
  */
-export async function assertPlannerLimitsEnforceable(limits: ManagedDshResourceLimits): Promise<void> {
-  if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return
-  await (limits.governor ?? sharedProcessTreeGovernor()).probe()
-}
+export const assertPlannerLimitsEnforceable: (limits: ManagedDshResourceLimits) => Promise<void> = assertManagedDshLimitsEnforceable
 
 /**
  * One planner per tenant, each rooted in that tenant's own directory, so planner sessions and working files never sit
