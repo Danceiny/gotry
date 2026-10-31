@@ -783,6 +783,10 @@ echo
 echo "=== 100. AaaS 容量探针 smoke(#674 A2,docs/rfc/aaas-rfc.md §3.4 触发条件 4;docs/ops/aaas-capacity-baseline.md 的数字由同一脚本的完整运行产出:smoke 形态只断言正确性——全部租户都打开,关闭后描述符归还,每个租户都已刷盘,恢复后的账本恰含所写的行;从不断言速度;临时 state root,不碰任何共享状态) ==="
 (cd ts && npx tsx scripts/tenant-capacity-probe.ts --smoke) || FAIL=1
 
+echo
+echo "=== 101. AaaS 交接正确性(#674 A1 后续,docs/rfc/aaas-rfc.md §4.2 第 6 条,威胁 S-6 与 S-12;一次独立审查指出 A1 的优雅交接会丢失已确认的写入:H 交接——在最终镜像取走之后经账本写入的内容被拒绝(带类型的 draining 错误),而不是被确认后丢失,后继 owner 的账本含有每一条已确认的写入;最终刷盘期间账本视图对读写都关闭,刷盘失败则重新开放并继续服务;租约失效之后才落地的刷盘按失败报告(FencedError、不发 flushed 的 released 事件,'snapshot_failed' 与成功区分),后继在上传期间接管时它保留自己钉住的基线;排空在途工作期间租约持续续期(真实计时器:工作长于租约时交接仍把它刷进最终镜像);交接失败后恢复服务不会产生第二条续期链;被 abandon 抢先的交接保持 abandon(不刷盘、不复活句柄);V 受守卫的数据库——exec 与 defaultSafeIntegers 等返回数据库本身的方法不再交出原始数据库,租约失效后链式调用仍被拦;F forget——正在进行的快照上传先完成再随其余副本一起被删(存储里不剩租户的镜像、清单或基线,本地文件也不剩),forget 开始后请求的快照被拒;O 观察者——抛错的 onEvent 不会让 openTenant 失败也不会占住租约;L 本地文件——刷完一切的交接删除本副本的本地账本文件,被放弃的租期保留文件;对 13 处守卫逐一变异均使套件变红(tenant-state-handoff-mutations.json);全离线,隔离 mkdtemp,不碰任何共享状态) ==="
+(cd ts && npx tsx scripts/tenant-state-handoff-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
