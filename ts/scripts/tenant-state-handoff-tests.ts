@@ -343,6 +343,8 @@ try {
     assert.throws(() => { delete (handle.ledger as unknown as { db?: unknown }).db }, TypeError, 'and nothing can be deleted from it')
     assert.throws(() => Object.setPrototypeOf(handle.ledger, null), TypeError, 'its prototype stays')
     assert.throws(() => Object.freeze(handle.ledger), TypeError, 'and it cannot be frozen or sealed, which would reach the ledger the router holds')
+    assert.throws(() => Object.preventExtensions(handle.ledger), TypeError, 'or made non-extensible')
+    assert.equal(Object.isExtensible(handle.ledger), true, 'and the ledger the router holds is as extensible as before, whatever was tried')
   })
 
   // ---- F: forget ----------------------------------------------------------------------------------------
