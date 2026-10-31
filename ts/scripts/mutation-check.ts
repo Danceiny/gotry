@@ -7,7 +7,11 @@
  * green under a broken guard proves nothing about that guard, so a surviving mutation fails the run. The list's
  * unmutated baseline must pass first, otherwise "red" would only mean the harness is broken.
  *
- * The working tree is never edited: mutations happen in the clone, so a run can sit beside other work.
+ * The working tree is never edited: mutations happen in the clone, so a run can sit beside other work. A mutation file must
+ * name a path inside the clone (no absolute path, no `..`, nothing under node_modules, which is shared with the real tree).
+ *
+ * A mutation is "killed" only when the suite fails for a reason about behaviour. A suite that times out, and an edit that
+ * does not even load (syntax or module errors), prove nothing about the guard, so both fail the run as well.
  *
  *   cd ts && npx tsx scripts/mutation-check.ts scripts/tenant-seam-mutations.json [--only <id>] [--keep] [--scratch <dir>]
  *
@@ -18,7 +22,7 @@
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 interface Mutation {
@@ -59,7 +63,22 @@ function cloneTrees(scratch: string): string {
   return tsClone
 }
 
-function runSuite(tsClone: string, suite: string, timeoutMs: number): { status: number | null; output: string } {
+/** An edit that does not load says nothing about a guard: `tsx` reports these, not an assertion. */
+const BROKEN_EDIT = /SyntaxError|TransformError|Transform failed|ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|Unexpected token/
+
+class ListError extends Error {}
+
+/** The file a mutation edits, which must be inside the scratch clone and never in the shared node_modules. */
+function mutationTarget(tsClone: string, file: string): string {
+  const parts = file.split(/[\\/]/)
+  if (isAbsolute(file) || parts.includes('..') || parts.includes('node_modules')) throw new ListError(`mutation file "${file}" must be a relative path inside ts/ and not under node_modules`)
+  const path = resolve(tsClone, file)
+  if (!path.startsWith(tsClone + sep)) throw new ListError(`mutation file "${file}" leaves the clone`)
+  if (!existsSync(path)) throw new ListError(`mutation file "${file}" does not exist`)
+  return path
+}
+
+function runSuite(tsClone: string, suite: string, timeoutMs: number): { status: number | null; output: string; timedOut: boolean } {
   const result = spawnSync(process.execPath, [join(tsClone, 'node_modules', 'tsx', 'dist', 'cli.mjs'), suite], {
     cwd: tsClone,
     encoding: 'utf8',
@@ -67,7 +86,8 @@ function runSuite(tsClone: string, suite: string, timeoutMs: number): { status: 
     env: { ...process.env, GOTRY_SESSION_LIVE: '0', GOTRY_HBCLI_LIVE: '0', GOTRY_HOTELBYTE_SKILLS_LIVE: '0' },
     maxBuffer: 64 * 1024 * 1024,
   })
-  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT'
+  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}`, timedOut }
 }
 
 function lastLines(text: string, count: number): string {
@@ -83,42 +103,58 @@ if (!listPath) {
 const list = JSON.parse(readFileSync(resolve(TS_ROOT, listPath), 'utf8')) as MutationList
 const only = argValue(args, '--only')
 const timeoutMs = list.timeoutMs ?? 180_000
-const scratch = mkdtempSync(join(argValue(args, '--scratch') ?? tmpdir(), 'gotry-mutation-'))
-const tsClone = cloneTrees(scratch)
 
-let survivors = 0
-let killed = 0
-try {
-  const baseline = runSuite(tsClone, list.suite, timeoutMs)
-  if (baseline.status !== 0) {
-    console.error(`baseline FAILED (exit ${baseline.status}) — mutation results would mean nothing\n${lastLines(baseline.output, 20)}`)
-    process.exit(2)
-  }
-  console.log(`baseline ok: ${list.suite}`)
-  for (const mutation of list.mutations) {
-    if (only && mutation.id !== only) continue
-    const path = join(tsClone, mutation.file)
-    const original = readFileSync(path, 'utf8')
-    const occurrences = original.split(mutation.find).length - 1
-    if (occurrences !== 1) {
-      console.error(`${mutation.id}: "find" occurs ${occurrences} times in ${mutation.file} (need exactly 1)`)
-      process.exit(2)
+function run(): number {
+  const scratch = mkdtempSync(join(argValue(args, '--scratch') ?? tmpdir(), 'gotry-mutation-'))
+  try {
+    const tsClone = cloneTrees(scratch)
+    // Every target is checked before anything runs, so a bad list fails at once and leaves no half-run behind.
+    const targets = list.mutations.map((mutation) => ({ mutation, path: mutationTarget(tsClone, mutation.file) }))
+    const baseline = runSuite(tsClone, list.suite, timeoutMs)
+    if (baseline.status !== 0) {
+      console.error(`baseline FAILED (exit ${baseline.status}${baseline.timedOut ? ', timed out' : ''}) — mutation results would mean nothing\n${lastLines(baseline.output, 20)}`)
+      return 2
     }
-    writeFileSync(path, original.replace(mutation.find, () => mutation.replace))
-    const outcome = runSuite(tsClone, list.suite, timeoutMs)
-    writeFileSync(path, original)
-    if (outcome.status === 0) {
-      survivors += 1
-      console.log(`SURVIVED ${mutation.id} ${mutation.file}${mutation.note ? ` — ${mutation.note}` : ''}`)
-    } else {
-      killed += 1
-      const reason = outcome.output.split('\n').find((line) => /AssertionError|Error:|FAIL|not ok/.test(line)) ?? `exit ${outcome.status}`
-      console.log(`killed   ${mutation.id} ${mutation.file}${mutation.note ? ` — ${mutation.note}` : ''}\n           ${reason.trim().slice(0, 160)}`)
+    console.log(`baseline ok: ${list.suite}`)
+    let killed = 0
+    let failed = 0
+    for (const { mutation, path } of targets) {
+      if (only && mutation.id !== only) continue
+      const original = readFileSync(path, 'utf8')
+      const occurrences = original.split(mutation.find).length - 1
+      if (occurrences !== 1) throw new ListError(`${mutation.id}: "find" occurs ${occurrences} times in ${mutation.file} (need exactly 1)`)
+      writeFileSync(path, original.replace(mutation.find, () => mutation.replace))
+      let outcome: ReturnType<typeof runSuite>
+      try {
+        outcome = runSuite(tsClone, list.suite, timeoutMs)
+      } finally {
+        writeFileSync(path, original)
+      }
+      const label = `${mutation.id} ${mutation.file}${mutation.note ? ` — ${mutation.note}` : ''}`
+      if (outcome.status === 0) {
+        failed += 1
+        console.log(`SURVIVED ${label}`)
+      } else if (outcome.timedOut) {
+        failed += 1
+        console.log(`TIMEOUT  ${label}\n           the suite hung under this edit (${timeoutMs} ms): that is not a kill`)
+      } else if (BROKEN_EDIT.test(outcome.output)) {
+        failed += 1
+        console.log(`BROKEN   ${label}\n           the edited file does not load: ${(outcome.output.split('\n').find((line) => BROKEN_EDIT.test(line)) ?? '').trim().slice(0, 140)}`)
+      } else {
+        killed += 1
+        const reason = outcome.output.split('\n').find((line) => /AssertionError|Error:|FAIL|not ok/.test(line)) ?? `exit ${outcome.status}`
+        console.log(`killed   ${label}\n           ${reason.trim().slice(0, 160)}`)
+      }
     }
+    console.log(`${killed} killed, ${failed} not killed (survived, hung or did not load)`)
+    return failed === 0 ? 0 : 1
+  } catch (error) {
+    if (error instanceof ListError) { console.error(error.message); return 2 }
+    throw error
+  } finally {
+    if (args.includes('--keep')) console.log(`scratch kept: ${scratch}`)
+    else rmSync(scratch, { recursive: true, force: true })
   }
-} finally {
-  if (args.includes('--keep')) console.log(`scratch kept: ${scratch}`)
-  else rmSync(scratch, { recursive: true, force: true })
 }
-console.log(`${killed} killed, ${survivors} survived`)
-process.exit(survivors === 0 ? 0 : 1)
+
+process.exit(run())
