@@ -1,0 +1,97 @@
+{
+  "suite": "scripts/tenant-state-handoff-tests.ts",
+  "timeoutMs": 120000,
+  "mutations": [
+    {
+      "id": "J1",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the view stays open while the final image is taken",
+      "find": "      this.state = 'flushing'\n      await this.snapshot()",
+      "replace": "      await this.snapshot()"
+    },
+    {
+      "id": "J2",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the closed state of the view is not checked",
+      "find": "    this.deps.lease.assertHeld()\n    if (this.state === 'flushing') throw new TenantDrainingError(this.deps.key)\n",
+      "replace": "    this.deps.lease.assertHeld()\n"
+    },
+    {
+      "id": "J3",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "renewals stop when a handoff begins",
+      "find": "    this.stopSnapshotTimer()\n    try {\n      await this.idle()",
+      "replace": "    this.stopTimers()\n    try {\n      await this.idle()"
+    },
+    {
+      "id": "J4",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the guarded database hands out the raw one",
+      "find": "        if (result === target) return guarded\n",
+      "replace": ""
+    },
+    {
+      "id": "J5",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "forget does not wait for an upload under way",
+      "find": "    await this.snapshotTail.catch(() => undefined)\n    const outcome = await forgetTenant(this.deps.context)",
+      "replace": "    const outcome = await forgetTenant(this.deps.context)"
+    },
+    {
+      "id": "J6",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a snapshot may start on a closed handle",
+      "find": "    if (this.state === 'closed') throw new TenantDrainingError(this.deps.key)\n    try {\n      const manifest = await publishSnapshot",
+      "replace": "    try {\n      const manifest = await publishSnapshot"
+    },
+    {
+      "id": "J7",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a flushed handoff leaves its local ledger behind",
+      "find": "    if (flushed) {\n      try { discardLocalLedger(this.deps.context) }",
+      "replace": "    if (false) {\n      try { discardLocalLedger(this.deps.context) }"
+    },
+    {
+      "id": "J8",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "an abandoned tenant's file is deleted too",
+      "find": "    if (flushed) {\n      try { discardLocalLedger(this.deps.context) }",
+      "replace": "    if (true) {\n      try { discardLocalLedger(this.deps.context) }"
+    },
+    {
+      "id": "J9",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a second renewal chain starts when service resumes",
+      "find": "if (!this.deps.autoRenew || this.state === 'closed' || this.renewTimer) return",
+      "replace": "if (!this.deps.autoRenew || this.state === 'closed') return"
+    },
+    {
+      "id": "J10",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "an observer that throws holds the lease",
+      "find": "      try {\n        options.onEvent?.(event)\n      } catch {\n        // Ignored on purpose.\n      }",
+      "replace": "      options.onEvent?.(event)"
+    },
+    {
+      "id": "J11",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a handoff overtaken by an abandon flushes anyway",
+      "find": "      if (this.state !== 'draining') throw new TenantDrainingError(this.deps.key)\n",
+      "replace": ""
+    },
+    {
+      "id": "J12",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a closed handle is brought back after a failed flush",
+      "find": "      else if (this.isDraining()) {\n        this.state = 'serving'",
+      "replace": "      else {\n        this.state = 'serving'"
+    },
+    {
+      "id": "J13",
+      "file": "src/tenant-state/epoch-copies.ts",
+      "note": "a flush that landed after the lease lapsed is reported as published",
+      "find": "    lease.assertHeld()\n    return manifest",
+      "replace": "    return manifest"
+    }
+  ]
+}
