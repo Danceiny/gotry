@@ -1,0 +1,188 @@
+{
+  "suite": "scripts/tenant-seam-adversarial-tests.ts",
+  "timeoutMs": 60000,
+  "mutations": [
+    {
+      "id": "S1",
+      "file": "src/booking-surface/server.ts",
+      "note": "a header can name the subject of the request (A2)",
+      "find": "      scope = await composition.tenancy.beginTurn(caller!)",
+      "replace": "      scope = await composition.tenancy.beginTurn(req.headers['x-gotry-subject'] ? { ...caller!, subject: String(req.headers['x-gotry-subject']) } : caller!)"
+    },
+    {
+      "id": "S2",
+      "file": "src/booking-surface/server.ts",
+      "note": "the strict body boundary lets forged fields through (A1)",
+      "find": "    if (!valid.ok) { sendJson(res, 400, { error: { code: 'invalid_booking_surface_turn', details: valid.errors } }); return }",
+      "replace": "    if (!valid.ok) { void 0 }"
+    },
+    {
+      "id": "S3",
+      "file": "src/booking-surface/server.ts",
+      "note": "an unauthenticated caller is served (A4)",
+      "find": "      if (!caller) {\n        sendJson(res, 401, { error: { code: 'unauthorized' } })\n        return\n      }\n",
+      "replace": ""
+    },
+    {
+      "id": "S4",
+      "file": "src/tenant-seam/seam.ts",
+      "note": "the issuer is left out of the tenant derivation (A3)",
+      "find": "  const ledgerTenant = deriveLedgerTenantId(key, issuer, subject)",
+      "replace": "  const ledgerTenant = deriveLedgerTenantId(key, 'issuer', subject)"
+    },
+    {
+      "id": "S5",
+      "file": "src/tenant-seam/seam.ts",
+      "note": "the organization id is not validated at the seam (C1)",
+      "find": "  const organization = assertOrganizationId(caller.organization)",
+      "replace": "  const organization = caller.organization"
+    },
+    {
+      "id": "S6",
+      "file": "src/tenant-seam/seam.ts",
+      "note": "oversized principal fields pass (C1)",
+      "find": "  if (value.length > MAX_PRINCIPAL_FIELD_CHARS) throw new InvalidPrincipalError(`${name} must be at most ${MAX_PRINCIPAL_FIELD_CHARS} characters`)\n",
+      "replace": ""
+    },
+    {
+      "id": "S7",
+      "file": "src/tenant-seam/seam.ts",
+      "note": "an organization without a key is not refused as such (C2)",
+      "find": "  if (key === null) throw new UnknownOrganizationError()\n",
+      "replace": ""
+    },
+    {
+      "id": "S8",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "planner sessions are keyed by task id only (B1)",
+      "find": "        sessionKey: (taskId) => `${key}\\u0000${taskId}`,",
+      "replace": "        sessionKey: (taskId) => taskId,"
+    },
+    {
+      "id": "S9",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "decision flights are shared across tenants (B2)",
+      "find": "        flightKey: (parts) => JSON.stringify([key, ...parts]),",
+      "replace": "        flightKey: (parts) => JSON.stringify(parts),"
+    },
+    {
+      "id": "S10",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "a handle for another tenant is served (A6)",
+      "find": "if (handle.organization !== tenant.organization || handle.ledgerTenant !== tenant.ledgerTenant || handle.ledger.tenant !== tenant.ledgerTenant) throw new TenantBindingError()",
+      "replace": "void TenantBindingError"
+    },
+    {
+      "id": "S11",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "the tenant is opened before the turn is admitted (F5)",
+      "find": "    const permit = quotas.admitTurn(tenant)\n    try {\n      const handle = await router.openTenant(tenant.organization, tenant.ledgerTenant)\n",
+      "replace": "    let permit: { release(): void } = { release() {} }\n    try {\n      const handle = await router.openTenant(tenant.organization, tenant.ledgerTenant)\n      permit = quotas.admitTurn(tenant)\n"
+    },
+    {
+      "id": "S12",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "the turn is not admitted at all (F4, F5, F6)",
+      "find": "    const permit = quotas.admitTurn(tenant)\n",
+      "replace": "    const permit = { release() {} }\n"
+    },
+    {
+      "id": "S13",
+      "file": "src/booking-surface/server.ts",
+      "note": "the concurrency slot is never given back (F7)",
+      "find": "  try {\n    await serveBookingTurn(req, res, composition, scope, maxBodyBytes, negotiatedFeatures)\n  } finally {\n    scope.release()\n  }\n",
+      "replace": "  await serveBookingTurn(req, res, composition, scope, maxBodyBytes, negotiatedFeatures)\n"
+    },
+    {
+      "id": "S14",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "decision work is not bracketed by the handle, so a handoff cannot drain it (F2)",
+      "find": "        runDecision: (work) => handle.runAsync(work),",
+      "replace": "        runDecision: (work) => work(),"
+    },
+    {
+      "id": "S15",
+      "file": "src/booking-surface/server.ts",
+      "note": "a lease lost mid-stream is told to the client as an ordinary error (F3)",
+      "find": "    if (scope.isTenantFault(error)) { res.destroy(); return }\n",
+      "replace": ""
+    },
+    {
+      "id": "S16",
+      "file": "src/booking-surface/server.ts",
+      "note": "a tenant fault before the stream is a request error (F10)",
+      "find": "    if (scope.isTenantFault(error)) {\n      const rejection = tenantRejection(error)",
+      "replace": "    if (false as boolean) {\n      const rejection = tenantRejection(error)"
+    },
+    {
+      "id": "S17",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "a quota refusal is not a 429 (F4, F8)",
+      "find": "      status: 429,",
+      "replace": "      status: 503,"
+    },
+    {
+      "id": "S18",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "the ledger size is not observed (F8)",
+      "find": "      quotas.observeLedgerBytes(tenant, ledgerBytes(handle))\n",
+      "replace": ""
+    },
+    {
+      "id": "S19",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "a planner invocation that reports nothing is charged nothing (G1, F9)",
+      "find": "          if (!meter.reported) quotas.chargeUnprovenInvocation(tenant)",
+      "replace": "          void 0"
+    },
+    {
+      "id": "S20",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "a usage report is charged whoever's invocation is running (G2)",
+      "find": "          if (!meter || meter.tenantKey !== key) return",
+      "replace": "          if (!meter) return"
+    },
+    {
+      "id": "S21",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "the planner is not rooted in the tenant's directory (G1)",
+      "find": "        tenantRoot: router.tenantRootOf(seam.organization, seam.ledgerTenant),",
+      "replace": "        tenantRoot: router.tenantRootOf('acme', 't-00000000000000000000000000000000'),"
+    },
+    {
+      "id": "S22",
+      "file": "src/booking-surface/startup.ts",
+      "note": "the tenant planner is rooted in the shared root (H5)",
+      "find": "      const handle = await createPlanner({ ...base, stateRoot: context.tenantRoot })",
+      "replace": "      const handle = await createPlanner({ ...base })"
+    },
+    {
+      "id": "S23",
+      "file": "src/booking-surface/startup.ts",
+      "note": "the tenancy is closed before the server (H4)",
+      "find": "      try { await server.close() } catch (error) { failures.push(error) }\n      try { await tenancy.close() } catch (error) { failures.push(error) }\n",
+      "replace": "      try { await tenancy.close() } catch (error) { failures.push(error) }\n      try { await server.close() } catch (error) { failures.push(error) }\n"
+    },
+    {
+      "id": "S24",
+      "file": "src/booking-surface/server.ts",
+      "note": "a tenancy can be combined with a shared key (H2)",
+      "find": "    if (options.apiKey) return Promise.reject(new Error('booking_copilot_tenancy_api_key_conflict'))\n",
+      "replace": ""
+    },
+    {
+      "id": "S25",
+      "file": "src/booking-surface/server.ts",
+      "note": "the answering catch rethrows a tenant fault instead of cutting the connection, so the listener's last resort has to catch it (F11)",
+      "find": "      if (!scope.isTenantFault(faultWhileAnswering)) throw faultWhileAnswering\n      res.destroy()\n",
+      "replace": "      throw faultWhileAnswering\n"
+    },
+    {
+      "id": "S26",
+      "file": "src/booking-surface/server.ts",
+      "note": "the listener of the tenant form does not contain an error that escapes a request (F12)",
+      "find": "    handled.catch((error: unknown) => {\n      console.error('[booking-copilot] request failed:', JSON.stringify({ thrownType: error instanceof Error ? error.name : typeof error }))\n      if (!res.writableEnded) res.destroy()\n    })\n",
+      "replace": "    void handled\n"
+    }
+  ]
+}

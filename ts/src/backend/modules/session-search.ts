@@ -21,6 +21,13 @@
  *   POST /v1/session/bridge/events  → 扩展 workspace 事件批量上行(批次 B,2026-10-01;
  *                                     body ≤256KB,逐条落 bridge_events,响应 {accepted,rejected})
  *
+ * AaaS A2(#674,S-5)组织维度(两个可选注入点,缺省 = 今天的单车道 `local`,行为逐字不变):
+ *   - callerOrganization(req):宿主在 bearer 之后解出本次请求的组织(null/非法 → 403
+ *     organization-unresolved);桥端点、事件落账、节律读判定、检索/登录提交都按它走,
+ *     提交经 queue.forOrganization(org),下游代码没有办法把作业提交去别的组织;
+ *   - admission(req, organization):配额闸(每组织/每租户的桥作业速率由部署组合接入,A3),
+ *     拒绝 → 429 + retry-after,release 在 finally 里执行。
+ *
  * 红线继承:登录在供应商官网由人完成;challenged 即停;节律闸在 sessionDidaSearch
  * 内;本模块再加单飞锁(同供应商串行,防并发打站点)。桥端点在 bearer 之上再强制
  * Origin ∈ 扩展白名单(网页跨域请求必带邪恶 Origin,双保险)。
@@ -35,9 +42,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { BackendModule } from '../kernel.ts'
-import { sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
+import { resolveTransportMode, sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
-import { CLIENT_ID_RE, createBridgeJobQueue, EXTENSION_ORIGINS, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
+import { BRIDGE_DEFAULT_ORGANIZATION, CLIENT_ID_RE, createBridgeJobQueue, EXTENSION_ORIGINS, isBridgeOrganization, type BridgeJobQueue, type SessionJobHandle } from '../../../capabilities/session/extension-bridge.ts'
 import { openBridgeLedgerStore, type BridgeEventInput, type BridgeLedgerStore } from '../../../capabilities/session/bridge-ledger.ts'
 import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from '../../../capabilities/session/extension-channel.ts'
 
@@ -65,7 +72,22 @@ export interface SessionSearchModuleOptions {
    * 只收模块结算的脱敏 verdict 行,不影响 HTTP 响应面。
    */
   verdictLog?: (line: string) => void
+  /**
+   * AaaS A2:解出本次请求的组织(宿主在 bearer 鉴权之后、用自己的凭据/断言解)。缺省 = 单车道 `local`。
+   * 返回 null 或非法组织 id(或抛错)→ 403 organization-unresolved,请求不进桥。组织从不取自请求体/请求头。
+   */
+  callerOrganization?: (req: IncomingMessage) => string | null
+  /**
+   * AaaS A2:配额闸,在 search / login-open 动桥之前咨询一次。拒绝 → 429 + retry-after
+   * ({ok:false, verdict:'quota_exceeded', error:code});放行可带 release,在 finally 里执行。
+   * 抛错 = 503 admission-unavailable(判不了额度就不放行)。
+   */
+  admission?: (req: IncomingMessage, organization: string) => SessionAdmissionDecision
 }
+
+export type SessionAdmissionDecision =
+  | { ok: true; release?: () => void }
+  | { ok: false; retryAfterSeconds: number; code: string }
 
 /** verdict 行 error 摘要上限(#272:结构化行的脱敏摘要,不是传输面文案) */
 const VERDICT_ERROR_SUMMARY_LIMIT = 200
@@ -305,6 +327,9 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
+  // AaaS A2: the cdp transport drives the host's own Chrome whoever asks, so a second organization could ride it. The
+  // organization-scoped form therefore runs on the extension bridge only (the single lane keeps the cdp opt-in).
+  if (options.callerOrganization && resolveTransportMode() !== 'extension') throw new Error('session_search_organization_requires_extension_transport')
   const search = options.search ?? sessionDidaSearch
   // verdict 结构化日志通道(#272):缺省 stderr(服务运行时既见面),测试注入收集器
   const verdictEmit = options.verdictLog ?? ((line: string) => { process.stderr.write(`${line}\n`) })
@@ -344,6 +369,59 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     return true
   }
 
+  /** 解出本次请求的组织:无注入点 = 单车道 local;解不出/非法 → 403 并返回 null(请求不进桥) */
+  const resolveOrganization = (req: IncomingMessage, res: ServerResponse): string | null => {
+    if (!options.callerOrganization) return BRIDGE_DEFAULT_ORGANIZATION
+    let resolved: string | null
+    try {
+      resolved = options.callerOrganization(req)
+    } catch {
+      resolved = null
+    }
+    if (resolved === null || !isBridgeOrganization(resolved)) {
+      sendJson(res, 403, { ok: false, error: 'organization-unresolved' })
+      return null
+    }
+    return resolved
+  }
+
+  /** bearer → 组织 → 业务:每个路由先后过这两道,组织只解一次 */
+  const withOrganization = (req: IncomingMessage, res: ServerResponse, run: (organization: string) => void): void => {
+    if (!authorized(req, res)) return
+    const organization = resolveOrganization(req, res)
+    if (organization === null) return
+    run(organization)
+  }
+
+  // 单车道(无注入点)下沿用今天的调用形状:队列本体 + 无参 stats/extensionConnected(既有假队列也只实现这些)
+  const scoped = options.callerOrganization !== undefined
+  const bridgeFor = (organization: string): SessionJobHandle => (scoped ? queue.forOrganization(organization) : queue)
+  const connectedOf = (organization: string): boolean => (scoped ? queue.extensionConnected(organization) : queue.extensionConnected())
+  const statsOf = (organization: string): ReturnType<BridgeJobQueue['stats']> => (scoped ? queue.stats(organization) : queue.stats())
+  const bridgeCaller = (organization: string): { organization: string } | undefined => (scoped ? { organization } : undefined)
+
+  /** 配额闸:放行返回 release 钩子(可无);拒绝已写好 429/503 响应,返回 null */
+  const admit = (req: IncomingMessage, res: ServerResponse, organization: string): { release?: () => void } | null => {
+    if (!options.admission) return {}
+    let decision: SessionAdmissionDecision
+    try {
+      decision = options.admission(req, organization)
+      // a return that is not a decision is an admission that could not be made: the same answer as a throw, never a crash
+      if (typeof decision !== 'object' || decision === null || typeof decision.ok !== 'boolean') throw new Error('admission_decision_malformed')
+    } catch {
+      sendJson(res, 503, { ok: false, error: 'admission-unavailable' })
+      return null
+    }
+    if (decision.ok) return typeof decision.release === 'function' ? { release: decision.release } : {}
+    const retryAfter = Number.isFinite(decision.retryAfterSeconds) ? Math.max(1, Math.ceil(decision.retryAfterSeconds)) : 1
+    res.setHeader('retry-after', String(retryAfter))
+    sendJson(res, 429, { ok: false, verdict: 'quota_exceeded', error: typeof decision.code === 'string' && decision.code.length > 0 ? decision.code : 'quota_exceeded' })
+    return null
+  }
+  const releaseAdmission = (admitted: { release?: () => void }): void => {
+    try { admitted.release?.() } catch { /* 释放额度的失败不反噬已写出的响应 */ }
+  }
+
   /**
    * 扩展 workspace 事件批量上行(批次 B,2026-10-01):bearer(路由前置 authorized)之上
    * 再强制 Origin ∈ 扩展白名单——与 /jobs 同链(同一 EXTENSION_ORIGINS 常量,网页跨域
@@ -355,7 +433,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
    * fail-closed 503:事件无处落账,不假成功。
    */
   const extensionOrigins = new Set(EXTENSION_ORIGINS)
-  async function handleBridgeEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleBridgeEvents(req: IncomingMessage, res: ServerResponse, organization: string): Promise<void> {
     const origin = req.headers.origin
     if (typeof origin !== 'string' || !extensionOrigins.has(origin)) {
       sendJson(res, 403, { ok: false, error: 'origin 不在桥白名单' })
@@ -398,7 +476,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       const input = validateBridgeEvent(rec.clientId, ev)
       if (!input) { rejected += 1; continue }
       try {
-        if (ledger.insertEvent(input)) accepted += 1
+        if (ledger.insertEvent(organization, input)) accepted += 1
         else rejected += 1
       } catch (e) {
         rejected += 1
@@ -408,37 +486,37 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     sendJson(res, 200, { ok: true, accepted, rejected })
   }
 
-  async function handleStatus(res: ServerResponse): Promise<void> {
+  async function handleStatus(res: ServerResponse, organization: string): Promise<void> {
     const startedAt = Date.now()
     const checkedAt = new Date().toISOString()
-    if (!queue.extensionConnected()) {
+    if (!connectedOf(organization)) {
       sendJson(res, 200, {
         ok: true,
         suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: 'extension-not-connected', detail: '会话执行环境=管理员浏览器扩展(Stai Travel Bridge);扩展未连接桥——在管理员浏览器安装扩展并配置本服务桥地址' }],
-        bridge: queue.stats(),
+        bridge: statsOf(organization),
         checkedAt,
       })
       verdictLog({ surface: 'status', supplier: 'dida-portal', verdict: 'needs-extension', latencyMs: Date.now() - startedAt })
       return
     }
-    const login = await extensionCookieNames({ site: 'dida-portal', domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 }, queue)
+    const login = await extensionCookieNames({ site: 'dida-portal', domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 }, bridgeFor(organization))
     if (!login.ok) {
       const verdict = classifyBridgeFailure(login.kind)
-      sendJson(res, 200, { ok: true, suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: verdict, detail: login.summary }], bridge: queue.stats(), checkedAt })
+      sendJson(res, 200, { ok: true, suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: verdict, detail: login.summary }], bridge: statsOf(organization), checkedAt })
       verdictLog({ surface: 'status', supplier: 'dida-portal', verdict, latencyMs: Date.now() - startedAt, error: login.summary })
       return
     }
     sendJson(res, 200, {
       ok: true,
       suppliers: [{ supplier: 'dida-portal', loggedIn: login.tickets.length > 0, tickets: login.tickets, ...(login.tickets.length === 0 ? { reason: 'needs-login' } : {}) }],
-      bridge: queue.stats(),
+      bridge: statsOf(organization),
       checkedAt,
     })
     // tickets 只有 cookie 名级(值零过手),verdict 行也只落登录态结论本身
     verdictLog({ surface: 'status', supplier: 'dida-portal', verdict: login.tickets.length > 0 ? 'logged-in' : 'needs-login', latencyMs: Date.now() - startedAt })
   }
 
-  async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleSearch(req: IncomingMessage, res: ServerResponse, organization: string): Promise<void> {
     const startedAt = Date.now()
     const parsed = await readAndParseObjectBody(req)
     if ('code' in parsed) { sendJson(res, 400, { ok: false, error: validationMessage(parsed.code) }); return }
@@ -452,7 +530,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     }
     // 挂载路径节律读判定(批次 A):账本口径跨重启(超时结算/上一次提交都在库里),
     // 与 sessionDidaSearch 的进程内节律闸双闸取严——内存闸挡本进程,账本闸挡重启前打过的站点。
-    const pacing = ledger?.pacingOf(supplier)
+    const pacing = ledger?.pacingOf(organization, supplier)
     if (pacing && Date.now() < pacing.cooldownUntil) {
       const retryAfterSec = Math.max(1, Math.ceil((pacing.cooldownUntil - Date.now()) / 1_000))
       res.setHeader('retry-after', String(retryAfterSec))
@@ -464,9 +542,14 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       verdictLog({ surface: 'search', supplier, verdict: 'cooldown', latencyMs: Date.now() - startedAt, error: `bridge ledger cooldown retry-after ${retryAfterSec}s` })
       return
     }
+    // 配额闸:只有真要动桥的请求才占额度——上面的形状校验与账本冷却已拦下的不算
+    const admitted = admit(req, res, organization)
+    if (admitted === null) return
     try {
       const q = queryCheck.query
-      const result = await withLock(supplier, () => search({
+      // 单飞锁按 组织+站点:一个组织的慢检索不排队另一个组织(单车道 local 的锁键仍是 supplier 本身)
+      const lockKey = organization === BRIDGE_DEFAULT_ORGANIZATION ? supplier : `${organization}/${supplier}`
+      const result = await withLock(lockKey, () => search({
         entryUrl: q?.entryUrl,
         timeoutMs: q?.timeoutMs,
         // 查询态(城市+日期)交给能力层 → 扩展驱动门户目的地搜索
@@ -474,7 +557,9 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
           ? { query: { city: q.city, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults, children: q.children } }
           : {}),
         auditPath: options.auditPath,
-        bridge: queue,
+        bridge: bridgeFor(organization),
+        // the in-process pacing gate is keyed like the lock: one organization's searches never pace another's
+        pacingKey: lockKey,
       }))
       if (result.verdict === 'cooldown') {
         res.setHeader('retry-after', '30')
@@ -508,10 +593,12 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     } catch (e) {
       sendJson(res, 500, { ok: false, error: `会话检索异常: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` })
       verdictLog({ surface: 'search', supplier, verdict: 'error', latencyMs: Date.now() - startedAt, error: e instanceof Error ? e.message : String(e) })
+    } finally {
+      releaseAdmission(admitted)
     }
   }
 
-  async function handleLoginOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleLoginOpen(req: IncomingMessage, res: ServerResponse, organization: string): Promise<void> {
     const parsed = await readAndParseObjectBody(req)
     if ('code' in parsed) { sendJson(res, 400, { ok: false, error: validationMessage(parsed.code) }); return }
     const supplierType = ensureStringField(parsed.obj, 'supplier')
@@ -524,28 +611,34 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     if (!/^https:\/\/portal\.dida\.com\//.test(url)) {
       sendJson(res, 400, { ok: false, error: '登录入口必须落在 https://portal.dida.com/ 域内(fail-closed)' }); return
     }
-    const outcome = await extensionOpenLogin({ site: supplier, url, timeoutMs: 20_000 }, queue)
-    if (!outcome.ok) {
-      const verdict = classifyBridgeFailure(outcome.kind)
-      sendJson(res, verdict === 'needs-extension' ? 503 : 502, { ok: false, verdict, error: outcome.summary })
-      return
+    const admitted = admit(req, res, organization)
+    if (admitted === null) return
+    try {
+      const outcome = await extensionOpenLogin({ site: supplier, url, timeoutMs: 20_000 }, bridgeFor(organization))
+      if (!outcome.ok) {
+        const verdict = classifyBridgeFailure(outcome.kind)
+        sendJson(res, verdict === 'needs-extension' ? 503 : 502, { ok: false, verdict, error: outcome.summary })
+        return
+      }
+      sendJson(res, 200, { ok: true, opened: true, url, note: '登录页已在会话所属浏览器置前台打开(验证码人过);gotry 永不经手密码/cookie 值' })
+    } finally {
+      releaseAdmission(admitted)
     }
-    sendJson(res, 200, { ok: true, opened: true, url, note: '登录页已在会话所属浏览器置前台打开(验证码人过);gotry 永不经手密码/cookie 值' })
   }
 
   return {
     name: 'session-search',
     routes: [
-      { method: 'GET', path: '/v1/session/status', handle: (req, res) => { if (authorized(req, res)) void handleStatus(res) } },
-      { method: 'POST', path: '/v1/session/search', handle: (req, res) => { if (authorized(req, res)) void handleSearch(req, res) } },
-      { method: 'POST', path: '/v1/session/login/open', handle: (req, res) => { if (authorized(req, res)) void handleLoginOpen(req, res) } },
-      // 桥协议端点:远程扩展经 bearer 鉴权连入;Origin 白名单在队列处理器内再校验一道
-      { method: 'GET', path: '/v1/session/bridge/health', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
-      { method: 'GET', path: '/v1/session/bridge/status', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
-      { method: 'POST', path: '/v1/session/bridge/jobs', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
-      { method: 'POST', path: '/v1/session/bridge/results', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
+      { method: 'GET', path: '/v1/session/status', handle: (req, res) => withOrganization(req, res, (organization) => { void handleStatus(res, organization) }) },
+      { method: 'POST', path: '/v1/session/search', handle: (req, res) => withOrganization(req, res, (organization) => { void handleSearch(req, res, organization) }) },
+      { method: 'POST', path: '/v1/session/login/open', handle: (req, res) => withOrganization(req, res, (organization) => { void handleLoginOpen(req, res, organization) }) },
+      // 桥协议端点:远程扩展经 bearer 鉴权连入;Origin 白名单在队列处理器内再校验一道;组织由宿主解出后传入队列
+      { method: 'GET', path: '/v1/session/bridge/health', handle: (req, res) => withOrganization(req, res, (organization) => queue.handleMountedRequest(req, res, bridgeCaller(organization))) },
+      { method: 'GET', path: '/v1/session/bridge/status', handle: (req, res) => withOrganization(req, res, (organization) => queue.handleMountedRequest(req, res, bridgeCaller(organization))) },
+      { method: 'POST', path: '/v1/session/bridge/jobs', handle: (req, res) => withOrganization(req, res, (organization) => queue.handleMountedRequest(req, res, bridgeCaller(organization))) },
+      { method: 'POST', path: '/v1/session/bridge/results', handle: (req, res) => withOrganization(req, res, (organization) => queue.handleMountedRequest(req, res, bridgeCaller(organization))) },
       // 事件上行(批次 B):bearer + Origin 白名单双校验与 /jobs 同链,处理器内落 bridge_events
-      { method: 'POST', path: BRIDGE_EVENTS_PATH, handle: (req, res) => { if (authorized(req, res)) void handleBridgeEvents(req, res) } },
+      { method: 'POST', path: BRIDGE_EVENTS_PATH, handle: (req, res) => withOrganization(req, res, (organization) => { void handleBridgeEvents(req, res, organization) }) },
     ],
     close: () => queue.close().then(() => { ledger?.close() }),
   }

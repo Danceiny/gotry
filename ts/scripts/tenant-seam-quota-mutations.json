@@ -1,0 +1,195 @@
+{
+  "suite": "scripts/tenant-seam-quota-tests.ts",
+  "timeoutMs": 60000,
+  "mutations": [
+    {
+      "id": "Q1",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-tenant concurrency cap",
+      "find": "    this.refuseIfOver(tenantAccount, 'tenant', 'concurrent_turns', tenantAccount.active, policy.tenant.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q2",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-organization concurrency cap",
+      "find": "    this.refuseIfOver(organizationAccount, 'organization', 'concurrent_turns', organizationAccount.active, policy.organization.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q3",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no global concurrency cap",
+      "find": "    this.refuseIfOver(organizationAccount, 'global', 'concurrent_turns', this.globalActive, policy.globalConcurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q4",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a permit released twice frees two slots",
+      "find": "        if (released) return\n        released = true\n",
+      "replace": "        released = true\n"
+    },
+    {
+      "id": "Q5",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "the oldest rate entry leaves a millisecond late",
+      "find": "while (this.head < this.entries.length && this.entries[this.head]![0] <= horizon)",
+      "replace": "while (this.head < this.entries.length && this.entries[this.head]![0] < horizon)"
+    },
+    {
+      "id": "Q6",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-tenant turn rate",
+      "find": "    this.refuseIfOverRolling(tenantAccount, 'tenant', 'turn_rate', tenantAccount.turns, now, policy.tenant.turns.limit)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q7",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-organization turn rate",
+      "find": "    this.refuseIfOverRolling(organizationAccount, 'organization', 'turn_rate', organizationAccount.turns, now, policy.organization.turns.limit)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q8",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "measured usage costs nothing",
+      "find": "    this.charge(seam, priced.tokens, Math.round(priced.costUsd * MICRO))",
+      "replace": "    this.charge(seam, priced.tokens, 0)"
+    },
+    {
+      "id": "Q9",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "an unproven invocation costs nothing",
+      "find": "    this.charge(seam, this.policy.unprovenInvocation.tokens, Math.round(this.policy.unprovenInvocation.costUsd * MICRO))",
+      "replace": "    this.charge(seam, 0, 0)"
+    },
+    {
+      "id": "Q10",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-tenant token budget",
+      "find": "    this.refuseIfOverRolling(tenantAccount, 'tenant', 'llm_tokens', tenantAccount.tokens, now, policy.tenant.llm.tokens)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q11",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-tenant cost budget",
+      "find": "    this.refuseIfOverRolling(tenantAccount, 'tenant', 'llm_cost', tenantAccount.costMicro, now, Math.round(policy.tenant.llm.costUsd * MICRO), MICRO)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q12",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-organization token budget",
+      "find": "    this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_tokens', organizationAccount.tokens, now, policy.organization.llm.tokens)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q13",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a refused turn still takes a rate entry",
+      "find": "    const { policy } = this\n",
+      "replace": "    const { policy } = this\n    tenantAccount.turns.add(now, 1)\n"
+    },
+    {
+      "id": "Q14",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "no per-tenant ledger size limit",
+      "find": "    this.refuseIfOver(tenantAccount, 'tenant', 'ledger_size', bytes, this.policy.tenant.ledgerBytes, LEDGER_RETRY_AFTER_MS)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q15",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "the organization's ledger total forgets the other tenants",
+      "find": "    organizationAccount.ledgerBytes += bytes - tenantAccount.ledgerBytes",
+      "replace": "    organizationAccount.ledgerBytes = bytes"
+    },
+    {
+      "id": "Q16",
+      "file": "src/tenant-seam/seam.ts",
+      "note": "any object counts as a tenant derived at the seam",
+      "find": "  return typeof value === 'object' && value !== null && issued.has(value)",
+      "replace": "  return typeof value === 'object' && value !== null"
+    },
+    {
+      "id": "Q17",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "the organization's bridge job rate is not counted for a tenant's job",
+      "find": "    this.refuseIfOverRolling(organizationAccount, 'organization', 'bridge_jobs', organizationAccount.bridge, now, this.policy.organization.bridgeJobs.limit)\n    tenantAccount.bridge.add(now, 1)",
+      "replace": "    tenantAccount.bridge.add(now, 1)"
+    },
+    {
+      "id": "Q18",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "the retry hint is always one millisecond",
+      "find": "    throw new QuotaExceededError(scope, dimension, limit / unit, window.msUntilBelow(now, limit))",
+      "replace": "    throw new QuotaExceededError(scope, dimension, limit / unit, 1)"
+    },
+    {
+      "id": "Q19",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "an organization-only caller is not validated",
+      "find": "const organizationAccount = this.organizationAccount(assertOrganizationId(organization))",
+      "replace": "const organizationAccount = this.organizationAccount(organization)"
+    },
+    {
+      "id": "Q20",
+      "file": "src/llm-price-table.ts",
+      "note": "cache-read tokens are not priced",
+      "find": "    inputCacheHitTokens: cacheReadTokens,",
+      "replace": "    inputCacheHitTokens: 0,"
+    },
+    {
+      "id": "Q21",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "idle accounts are never swept",
+      "find": "    if (this.admissions % SWEEP_EVERY !== 0) return",
+      "replace": "    return"
+    },
+    {
+      "id": "Q22",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a forgotten tenant stays in its organization's ledger total",
+      "find": "    if (organizationAccount) organizationAccount.ledgerBytes -= account.ledgerBytes\n",
+      "replace": ""
+    },
+    {
+      "id": "Q23",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a model the table does not price is accepted at construction",
+      "find": "    assertModelPriced(options.model, options.priceTable)\n",
+      "replace": ""
+    },
+    {
+      "id": "Q24",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a usage report of zero tokens is accepted as a measurement (L2)",
+      "find": "    if (priced.tokens === 0) throw new RangeError('a usage report of zero tokens proves nothing')\n",
+      "replace": ""
+    },
+    {
+      "id": "Q25",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a fresh tenant that is refused is registered before the checks (I2, I6)",
+      "find": "    const tenantAccount = known ?? new Account(this.policy.tenant)\n",
+      "replace": "    const tenantAccount = this.tenantAccount(key)\n"
+    },
+    {
+      "id": "Q26",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "a swept tenant leaves its ledger size in the organization total (I4)",
+      "find": "      if (organizationAccount) organizationAccount.ledgerBytes -= account.ledgerBytes\n    }\n    for (const [key, account] of this.organizations)",
+      "replace": "    }\n    for (const [key, account] of this.organizations)"
+    },
+    {
+      "id": "Q27",
+      "file": "src/tenant-seam/quotas.ts",
+      "note": "only an admitted turn advances the sweep: a flood of refused attempts outruns it (I6)",
+      "find": "    this.maybeSweep(now)\n    const key = seamTenantKey(seam)\n    // A tenant is registered only when a turn is admitted: a fresh tenant that is refused leaves nothing behind.\n    const known = this.tenants.get(key)\n    const tenantAccount = known ?? new Account(this.policy.tenant)\n    const organizationAccount = this.organizationAccount(seam.organization)\n    const { policy } = this\n    this.refuseIfOver(tenantAccount, 'tenant', 'concurrent_turns', tenantAccount.active, policy.tenant.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n    this.refuseIfOverRolling(tenantAccount, 'tenant', 'turn_rate', tenantAccount.turns, now, policy.tenant.turns.limit)\n    this.refuseIfOverRolling(tenantAccount, 'tenant', 'llm_tokens', tenantAccount.tokens, now, policy.tenant.llm.tokens)\n    this.refuseIfOverRolling(tenantAccount, 'tenant', 'llm_cost', tenantAccount.costMicro, now, Math.round(policy.tenant.llm.costUsd * MICRO), MICRO)\n    this.refuseIfOver(organizationAccount, 'organization', 'concurrent_turns', organizationAccount.active, policy.organization.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n    this.refuseIfOverRolling(organizationAccount, 'organization', 'turn_rate', organizationAccount.turns, now, policy.organization.turns.limit)\n    this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_tokens', organizationAccount.tokens, now, policy.organization.llm.tokens)\n    this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_cost', organizationAccount.costMicro, now, Math.round(policy.organization.llm.costUsd * MICRO), MICRO)\n    this.refuseIfOver(organizationAccount, 'global', 'concurrent_turns', this.globalActive, policy.globalConcurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n    if (!known) this.tenants.set(key, tenantAccount)\n",
+      "replace": "    const key = seamTenantKey(seam)\n    // A tenant is registered only when a turn is admitted: a fresh tenant that is refused leaves nothing behind.\n    const known = this.tenants.get(key)\n    const tenantAccount = known ?? new Account(this.policy.tenant)\n    const organizationAccount = this.organizationAccount(seam.organization)\n    const { policy } = this\n    this.refuseIfOver(tenantAccount, 'tenant', 'concurrent_turns', tenantAccount.active, policy.tenant.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n    this.refuseIfOverRolling(tenantAccount, 'tenant', 'turn_rate', tenantAccount.turns, now, policy.tenant.turns.limit)\n    this.refuseIfOverRolling(tenantAccount, 'tenant', 'llm_tokens', tenantAccount.tokens, now, policy.tenant.llm.tokens)\n    this.refuseIfOverRolling(tenantAccount, 'tenant', 'llm_cost', tenantAccount.costMicro, now, Math.round(policy.tenant.llm.costUsd * MICRO), MICRO)\n    this.refuseIfOver(organizationAccount, 'organization', 'concurrent_turns', organizationAccount.active, policy.organization.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n    this.refuseIfOverRolling(organizationAccount, 'organization', 'turn_rate', organizationAccount.turns, now, policy.organization.turns.limit)\n    this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_tokens', organizationAccount.tokens, now, policy.organization.llm.tokens)\n    this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_cost', organizationAccount.costMicro, now, Math.round(policy.organization.llm.costUsd * MICRO), MICRO)\n    this.refuseIfOver(organizationAccount, 'global', 'concurrent_turns', this.globalActive, policy.globalConcurrentTurns, CONCURRENCY_RETRY_AFTER_MS)\n    if (!known) this.tenants.set(key, tenantAccount)\n    this.maybeSweep(now)\n"
+    }
+  ]
+}

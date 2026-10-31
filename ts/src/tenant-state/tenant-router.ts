@@ -27,7 +27,7 @@ import {
   type SnapshotManifest,
   type SnapshotRef,
 } from './epoch-copies.ts'
-import { FencedError, LeaseLostError, RouterClosedError, TenantDrainingError } from './errors.ts'
+import { FencedError, LeaseLostError, ReplicaAtCapacityError, RouterClosedError, TenantDrainingError } from './errors.ts'
 import { leaseKeyFor, tenantRootFor } from './ids.ts'
 import type { LeaseStore } from './lease-store.ts'
 import { systemMonotonicClock, TenantLease, type MonotonicClock } from './tenant-lease.ts'
@@ -112,14 +112,14 @@ function guardedDatabase(db: Database.Database, assertHeld: Gate): Database.Data
   })
 }
 
-/** The ledger as a handle exposes it. `close` stays callable when the lease is gone, because cleanup must always be possible. */
+/** The ledger as a handle exposes it. The router owns its lifecycle, so `close` does nothing here. */
 function guardedLedger(ledger: StateLedger, assertHeld: Gate): StateLedger {
   return new Proxy(ledger, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target)
       if (property === 'db') return guardedDatabase(value as Database.Database, assertHeld)
       if (typeof value !== 'function') return value
-      if (property === 'close') return (...args: unknown[]) => Reflect.apply(value as Callable, target, args)
+      if (property === 'close') return () => undefined
       return (...args: unknown[]) => {
         assertHeld()
         return Reflect.apply(value as Callable, target, args)
@@ -155,6 +155,13 @@ export interface TenantRouterOptions {
   readonly renewEveryMs?: number
   /** Publish a snapshot this often while serving. Zero (the default) leaves snapshots to the caller and to handoff. */
   readonly snapshotEveryMs?: number
+  /**
+   * The most tenants this replica holds at once, counting those still opening and those draining. A tenant over it is
+   * refused with `ReplicaAtCapacityError` before its lease or any file is touched. Each open tenant holds about three file
+   * descriptors (docs/ops/aaas-capacity-baseline.md), so a deployment sets this from its descriptor limit; unset, as
+   * before, there is no cap and the limit is whatever the process runs out of first.
+   */
+  readonly maxOpenTenants?: number
   readonly onEvent?: (event: RouterEvent) => void
 }
 
@@ -228,6 +235,10 @@ class OpenTenant implements TenantHandle {
 
   isOpen(): boolean {
     return this.state === 'serving'
+  }
+
+  isDraining(): boolean {
+    return this.state === 'draining'
   }
 
   /** Called once by the router, after the handle is registered. */
@@ -420,6 +431,7 @@ export class TenantRouter {
 
   constructor(options: TenantRouterOptions) {
     if (typeof options.replicaId !== 'string' || options.replicaId.length === 0) throw new RangeError('replicaId must be a non-empty string')
+    if (options.maxOpenTenants !== undefined && (!Number.isSafeInteger(options.maxOpenTenants) || options.maxOpenTenants < 1)) throw new RangeError('maxOpenTenants must be a positive integer')
     this.options = options
     this.clock = options.clock ?? systemMonotonicClock
   }
@@ -441,8 +453,13 @@ export class TenantRouter {
     }
     const existing = this.handles.get(key)
     if (existing?.isOpen()) return Promise.resolve(existing)
+    // Our own lease is still held while a handoff drains, so an acquisition would only be told it is held by us.
+    if (existing?.isDraining()) return Promise.reject(new TenantDrainingError(key))
     const pending = this.opening.get(key)
     if (pending) return pending
+    const cap = this.options.maxOpenTenants
+    // A tenant being opened already holds a slot, and so does one being handed off: both still hold their descriptors.
+    if (cap !== undefined && new Set([...this.handles.keys(), ...this.opening.keys()]).size >= cap) return Promise.reject(new ReplicaAtCapacityError(cap))
     const attempt = this.open(organization, ledgerTenant, key).finally(() => { this.opening.delete(key) })
     this.opening.set(key, attempt)
     return attempt
@@ -456,6 +473,14 @@ export class TenantRouter {
 
   openCount(): number {
     return [...this.handles.values()].filter(handle => handle.isOpen()).length
+  }
+
+  /**
+   * The directory of one tenant on this replica: its ledger and everything that must travel with it (planner working
+   * files, tickets). A consumer that keeps per-tenant files puts them here, never beside another tenant's.
+   */
+  tenantRootOf(organization: string, ledgerTenant: string): string {
+    return tenantRootFor(this.options.stateRoot, organization, ledgerTenant)
   }
 
   /** Hands every open tenant off gracefully and refuses new ones. Resolves with the tenants whose flush failed. */

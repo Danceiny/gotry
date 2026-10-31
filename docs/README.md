@@ -208,6 +208,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | Public issue→PR→review→merge ledger; plus triage/verification/adjudication rules for external PRs (including automation bots) |
 | [ops/security.md](ops/security.md) | Security policy and vulnerability disclosure: reporting channel, triage discipline, append-only security event log |
 | [ops/ledger-tenant-repair.md](ops/ledger-tenant-repair.md) | #254 ledger tenant repair owner-gate checklist (dry-run → authorize → apply → private receipt) |
+| [ops/aaas-capacity-baseline.md](ops/aaas-capacity-baseline.md) | AaaS capacity baseline (measured, living): cost per open tenant, per takeover and per booted planner, and which numbers still need a real-node probe |
 
 ### assets/ and superpowers/
 

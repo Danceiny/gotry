@@ -49,6 +49,8 @@ export class FaultyDurableStore implements DurableStore {
   down = false
   failNextPut: RegExp | null = null
   conflictNextPut: RegExp | null = null
+  /** Runs once, just before the next listing is answered: a way to land another replica's upload inside a restore. */
+  beforeNextList: (() => Promise<void>) | null = null
   private readonly inner: DurableStore
 
   constructor(inner: DurableStore) {
@@ -79,6 +81,11 @@ export class FaultyDurableStore implements DurableStore {
 
   async list(prefix: string): Promise<string[]> {
     this.gate()
+    const hook = this.beforeNextList
+    if (hook) {
+      this.beforeNextList = null
+      await hook()
+    }
     return this.inner.list(prefix)
   }
 

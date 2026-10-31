@@ -19,6 +19,13 @@
  *   POST /results/:jobId   → 善果/失败回传(≤8MB;batchSearch ~550KB)
  * 语义:桥不存在即整个扩展车道不存在——fail-closed 不变量在调用方(session-search 的 needs-extension)。
  * 审计:job 提交/回传写 GuardAuditEntry 同款 JSONL(kind:'extension-session-job',channel 层负责)。
+ *
+ * AaaS A2(#674,威胁 S-5)组织维度:作业、取活者(parked/长轮询)、在飞作业、心跳时刻、节律、
+ * 事件都属于恰好一个组织。作业匹配要求组织严格相等(先于 origin/clientId/站点 capability 判定);
+ * 另一个组织的回包与「未知作业」一模一样地 404 且**不落任何行**,在飞作业纹丝不动。
+ * 取活者的组织只由挂载宿主在鉴权之后经 `handleMountedRequest(req, res, { organization })`
+ * 传入,**从不读请求体或请求头**;不传 = 缺省 `local`(桌面 loopback 桥与既有调用方行为逐字不变)。
+ * 发给扩展的 ExtensionJob 线上形状不变:组织只活在队列内部条目与账本列里。
  */
 
 import { randomUUID } from 'node:crypto'
@@ -26,6 +33,10 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { assertOrganizationId } from '../../src/tenant-state/ids.ts'
+
+/** 缺省组织 = 今天的单车道:不传组织的调用方(桌面 loopback 桥、既有测试)都落在这里 */
+export const BRIDGE_DEFAULT_ORGANIZATION = 'local'
 
 /** 桥端口池(extension/manifest.json host_permissions 必须同面;§38 断言) */
 export const BRIDGE_PORTS = [8791, 8792, 8793, 8794, 8795] as const
@@ -136,7 +147,7 @@ export type SubmitOutcome =
   | { ok: false; reason: 'bridge-unavailable' | 'extension-not-connected' | 'timeout'; summary: string; jobKind?: ExtensionJobKind; stage?: 'queued' | 'claimed' }
 
 export interface SessionJobHandle {
-  submit(job: Omit<ExtensionJob, 'jobId'>, opts?: { timeoutMs?: number; extensionWaitMs?: number; preferredOrigin?: string; preferredClientId?: string }): Promise<SubmitOutcome>
+  submit(job: Omit<ExtensionJob, 'jobId'>, opts?: { timeoutMs?: number; extensionWaitMs?: number; preferredOrigin?: string; preferredClientId?: string; organization?: string }): Promise<SubmitOutcome>
   extensionConnected(): boolean
   port: number
   close(): Promise<void>
@@ -160,6 +171,8 @@ export interface SessionBridgeOptions {
 
 interface QueuedJob {
   job: ExtensionJob
+  /** 作业所属组织(队列内部属性,不进发给扩展的 ExtensionJob) */
+  organization: string
   resolve: (outcome: SubmitOutcome) => void
   timer: ReturnType<typeof setTimeout> | null
   preferredOrigin?: string
@@ -183,12 +196,16 @@ interface ParkedPoller {
   capabilities: Set<string> | null
   origin: string
   clientId?: string
+  /** 取活者所属组织:由挂载宿主鉴权后传入,从不取自轮询体/请求头 */
+  organization: string
 }
 
 /** 扩展客户端标识形状(每 SW 生命周期一个 crypto.randomUUID);导出供事件上行端点(批次 B)同链校验 */
 export const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function jobMatches(entry: QueuedJob, capabilities: Set<string> | null, origin: string, clientId?: string): boolean {
+function jobMatches(entry: QueuedJob, capabilities: Set<string> | null, origin: string, clientId: string | undefined, organization: string): boolean {
+  // 组织严格相等先于一切:站点/origin/clientId 全部吻合的另一个组织的取活者,也永远领不到这个作业
+  if (entry.organization !== organization) return false
   if (entry.preferredOrigin && entry.preferredOrigin !== origin) return false
   if (entry.preferredClientId && entry.preferredClientId !== clientId) return false
   return capabilities == null || capabilities.size === 0 || capabilities.has(entry.job.site)
@@ -231,11 +248,24 @@ export interface BridgeQueueStats {
  *     浏览器客户端即执行环境,服务器只做编排/队列)
  */
 export interface BridgeJobQueue extends SessionJobHandle {
-  stats(): BridgeQueueStats
-  /** 完整桥协议(loopback 独立桥形态;/results/:jobId 路径式) */
+  /** 某组织的队列快照(缺省 `local`);别的组织的作业/取活者/心跳一概不计 */
+  stats(organization?: string): BridgeQueueStats
+  /** 某组织的扩展是否在线(缺省 `local`):心跳按组织分开记,一个组织的扩展在线不代表另一个组织在线 */
+  extensionConnected(organization?: string): boolean
+  /**
+   * 绑定到一个组织的提交句柄:`submit` 一律注入该组织,调用方传的 `organization` 会被覆盖,
+   * 所以下游代码(会话检索、登录入口)没有任何办法把作业提交到别的组织。组织非法 = 抛 InvalidTenantIdError。
+   * 句柄是视图:`close()` 不关闭共享队列。
+   */
+  forOrganization(organization: string): SessionJobHandle
+  /** 完整桥协议(loopback 独立桥形态;/results/:jobId 路径式;组织恒为 `local`) */
   handleRequest(req: IncomingMessage, res: ServerResponse): void
-  /** 挂载形态(/v1/session/bridge 前缀;/results?jobId= 查询式;bearer 鉴权由宿主模块前置) */
-  handleMountedRequest(req: IncomingMessage, res: ServerResponse): void
+  /**
+   * 挂载形态(/v1/session/bridge 前缀;/results?jobId= 查询式;bearer 鉴权由宿主模块前置)。
+   * `caller.organization` 是宿主在鉴权之后解出的组织(缺省 `local`);非法组织 → 403 organization-invalid,
+   * 先于其它一切处理。组织**从不**读请求体或请求头。
+   */
+  handleMountedRequest(req: IncomingMessage, res: ServerResponse, caller?: { organization: string }): void
   /**
    * 开机恢复(批次 A;仅 store 注入形态存在,纯内存无此方法):
    * queued→重排 / claimed 已超时→unresolved+节律记账 / claimed 未超时→复活 inFlight。
@@ -265,28 +295,31 @@ export interface BridgeJobQueueOptions {
  */
 export interface BridgeJobStore {
   /** write-before-submit:入队前先落 queued;**抛错 = 提交失败,调用方不得入队派发** */
-  insertQueuedJob(job: ExtensionJob, timeoutAt: number): void
+  insertQueuedJob(organization: string, job: ExtensionJob, timeoutAt: number): void
   /** 领取(/jobs 派发与 dispatchToParked 两处):claimed + 领取者,attempts 递增 */
-  markClaimed(jobId: string, claim: { origin: string; clientId?: string }): void
-  markResolved(jobId: string, result: ExtensionJobResult): void
+  markClaimed(organization: string, jobId: string, claim: { origin: string; clientId?: string }): void
+  markResolved(organization: string, jobId: string, result: ExtensionJobResult): void
   /** 超时/对账结算:曾被领取却未拿到善果终态(带回包则由 recordOrphanResult 落 result) */
-  markUnresolved(jobId: string, note?: { reason: string }): void
+  markUnresolved(organization: string, jobId: string, note?: { reason: string }): void
   /** 从未被领取的终态作废(零站点花费) */
-  markVoid(jobId: string): void
-  /** 孤儿回包落库(未知 jobId 的回包内容以 unresolved 保留,供对账) */
-  recordOrphanResult(jobId: string, result: ExtensionJobResult): void
+  markVoid(organization: string, jobId: string): void
+  /** 孤儿回包落库(未知 jobId 的回包内容以 unresolved 保留,供对账);jobId 已属别的组织 = 抛错零写入 */
+  recordOrphanResult(organization: string, jobId: string, result: ExtensionJobResult): void
   /** bridge_clients upsert(/jobs 轮询体 clientId + capabilities 到达即刷新) */
-  upsertClient(clientId: string, origin: string, capabilities: readonly string[]): void
+  upsertClient(organization: string, clientId: string, origin: string, capabilities: readonly string[]): void
   /** cookie-names 命中票据名(名字级)→ 记客户端在该站点持有登录态 */
-  recordClientLoginSite(clientId: string, site: string): void
-  /** 站点导航类作业提交/领取:记命中时刻并推冷却 */
-  noteSiteHit(site: string): void
+  recordClientLoginSite(organization: string, clientId: string, site: string): void
+  /** 站点导航类作业提交/领取:记命中时刻并推冷却(按 组织+站点) */
+  noteSiteHit(organization: string, site: string): void
   /** 超时结算冷却(claimed 超时:站点可能已被打) */
-  applyCooldown(site: string): void
-  pacingOf(site: string): { lastHitAt: number; cooldownUntil: number } | null
-  /** recoverOnBoot 输入:未终态(queued/claimed)作业投影 */
+  applyCooldown(organization: string, site: string): void
+  pacingOf(organization: string, site: string): { lastHitAt: number; cooldownUntil: number } | null
+  /** 该 jobId 在账本里属于哪个组织(无此行 = null):回包处理用它认出「别的组织的作业」 */
+  organizationOfJob(jobId: string): string | null
+  /** recoverOnBoot 输入:全部组织的未终态(queued/claimed)作业投影,每行带所属组织 */
   listPendingJobs(): Array<{
     id: string
+    organization: string
     kind: string
     site: string
     payload_json: string
@@ -316,6 +349,16 @@ export function isNavigationJobKind(kind: ExtensionJobKind): boolean {
   return NAVIGATION_JOB_KINDS.has(kind)
 }
 
+/** 组织 id 是否合法(assertOrganizationId 的布尔形式;非法组织一律在碰任何状态之前被拒) */
+export function isBridgeOrganization(value: unknown): value is string {
+  try {
+    assertOrganizationId(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJobQueue {
   const extensionOrigins = new Set(opts.extensionOrigins ?? EXTENSION_ORIGINS)
   const now = opts.now ?? Date.now
@@ -323,9 +366,13 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
   const queue: QueuedJob[] = []
   const inFlight = new Map<string, QueuedJob>()
   const parked: ParkedPoller[] = []
-  let lastSeenAt = 0
+  // 心跳时刻按组织分开记:一个组织的扩展在线,不代表另一个组织的扩展在线
+  const lastSeenAt = new Map<string, number>()
   let closed = false
-  const extensionConnected = (): boolean => lastSeenAt > 0 && now() - lastSeenAt < EXTENSION_CONNECTED_WINDOW_MS
+  const extensionConnected = (organization: string = BRIDGE_DEFAULT_ORGANIZATION): boolean => {
+    const seen = lastSeenAt.get(assertOrganizationId(organization)) ?? 0
+    return seen > 0 && now() - seen < EXTENSION_CONNECTED_WINDOW_MS
+  }
 
   /**
    * 账本写兜底:持久面故障不得打断桥协议主路径(write-before-submit 的 INSERT 除外,
@@ -341,65 +388,87 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
   }
 
   /** 领走首个 capability 匹配的 job(移入 inFlight——回包按 jobId 路由,两处都可找到) */
-  function takeMatching(capabilities: Set<string> | null, origin: string, clientId?: string): QueuedJob | null {
-    const idx = queue.findIndex((q) => jobMatches(q, capabilities, origin, clientId))
+  function takeMatching(capabilities: Set<string> | null, origin: string, clientId: string | undefined, organization: string): QueuedJob | null {
+    const idx = queue.findIndex((q) => jobMatches(q, capabilities, origin, clientId, organization))
     if (idx < 0) return null
     const [next] = queue.splice(idx, 1)
     next.claimedOrigin = origin
     next.claimedClientId = clientId
     inFlight.set(next.job.jobId, next)
-    record('markClaimed', () => store!.markClaimed(next.job.jobId, { origin, clientId }))
-    if (isNavigationJobKind(next.job.kind)) record('noteSiteHit', () => store!.noteSiteHit(next.job.site))
+    record('markClaimed', () => store!.markClaimed(next.organization, next.job.jobId, { origin, clientId }))
+    if (isNavigationJobKind(next.job.kind)) record('noteSiteHit', () => store!.noteSiteHit(next.organization, next.job.site))
     return next
   }
 
   /** 扩展回包:queued 与 inFlight 两处都可寻址(job 执行失败 = result.ok:false,桥自身不吞) */
-  function resolveJob(jobId: string, parsed: ExtensionJobResult): void {
+  function resolveJob(organization: string, jobId: string, parsed: ExtensionJobResult): void {
     const inFlightHit = inFlight.get(jobId)
     if (inFlightHit) {
+      // 第二道防线:回包处理已把别的组织的 jobId 按「未知作业」挡在外面,这里再不认一次
+      if (inFlightHit.organization !== organization) return
       inFlight.delete(jobId)
       if (inFlightHit.timer) clearTimeout(inFlightHit.timer)
-      record('markResolved', () => store!.markResolved(jobId, parsed))
+      record('markResolved', () => store!.markResolved(inFlightHit.organization, jobId, parsed))
       record('client-login-site', () => {
         const names = Array.isArray(parsed.names) ? parsed.names : []
         if (parsed.ok === true && inFlightHit.job.kind === 'cookie-names' && names.length > 0 && inFlightHit.claimedClientId) {
-          store!.recordClientLoginSite(inFlightHit.claimedClientId, inFlightHit.job.site)
+          store!.recordClientLoginSite(inFlightHit.organization, inFlightHit.claimedClientId, inFlightHit.job.site)
         }
       })
       inFlightHit.resolve({ ok: true, result: parsed, origin: inFlightHit.claimedOrigin, clientId: inFlightHit.claimedClientId })
       return
     }
-    const idx = queue.findIndex((q) => q.job.jobId === jobId)
+    const idx = queue.findIndex((q) => q.job.jobId === jobId && q.organization === organization)
     if (idx < 0) return
     const [entry] = queue.splice(idx, 1)
     if (entry.timer) clearTimeout(entry.timer)
-    record('markResolved', () => store!.markResolved(jobId, parsed))
+    record('markResolved', () => store!.markResolved(entry.organization, jobId, parsed))
     entry.resolve({ ok: true, result: parsed })
+  }
+
+  /**
+   * 这个 jobId 属于另一个组织吗(内存里的排队/在飞条目,或账本里的行)?回包处理用它在**一切写入之前**
+   * 把别的组织的回包挡掉。读不了账本就证明不了「它不属于别的组织」,宁可当作属于(不落孤儿行)。
+   */
+  function belongsToAnotherOrganization(jobId: string, organization: string): boolean {
+    const held = inFlight.get(jobId) ?? queue.find((q) => q.job.jobId === jobId)
+    if (held) return held.organization !== organization
+    if (!store) return false
+    try {
+      const owner = store.organizationOfJob(jobId)
+      return owner !== null && owner !== organization
+    } catch {
+      return true
+    }
   }
 
   /** 新 job 入队时即时派发给 capability 匹配的 parked 取活者(否则要白等一个 20s 长轮询周期) */
   function dispatchToParked(entry: QueuedJob): boolean {
-    const i = parked.findIndex((p) => jobMatches(entry, p.capabilities, p.origin, p.clientId))
+    const i = parked.findIndex((p) => jobMatches(entry, p.capabilities, p.origin, p.clientId, p.organization))
     if (i < 0) return false
     const [p] = parked.splice(i, 1)
     clearTimeout(p.timer)
     entry.claimedOrigin = p.origin
     entry.claimedClientId = p.clientId
     inFlight.set(entry.job.jobId, entry)
-    record('markClaimed', () => store!.markClaimed(entry.job.jobId, { origin: p.origin, clientId: p.clientId }))
-    if (isNavigationJobKind(entry.job.kind)) record('noteSiteHit', () => store!.noteSiteHit(entry.job.site))
+    record('markClaimed', () => store!.markClaimed(entry.organization, entry.job.jobId, { origin: p.origin, clientId: p.clientId }))
+    if (isNavigationJobKind(entry.job.kind)) record('noteSiteHit', () => store!.noteSiteHit(entry.organization, entry.job.site))
     p.res.statusCode = 200
     p.res.setHeader('content-type', 'application/json')
     p.res.end(JSON.stringify({ job: entry.job }))
     return true
   }
 
-  const stats = (): BridgeQueueStats => ({
-    queued: queue.length,
-    inFlight: inFlight.size,
-    parked: parked.length,
-    lastSeenMsAgo: lastSeenAt > 0 ? now() - lastSeenAt : null,
-  })
+  const stats = (organization: string = BRIDGE_DEFAULT_ORGANIZATION): BridgeQueueStats => {
+    const org = assertOrganizationId(organization)
+    const seen = lastSeenAt.get(org) ?? 0
+    return {
+      queued: queue.filter((q) => q.organization === org).length,
+      inFlight: [...inFlight.values()].filter((q) => q.organization === org).length,
+      parked: parked.filter((p) => p.organization === org).length,
+      lastSeenMsAgo: seen > 0 ? now() - seen : null,
+    }
+  }
 
   /**
    * 结算器(submit 与 recoverOnBoot 复活条目共用):内存三态清理 + 账本终态落笔。
@@ -422,15 +491,15 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
       if (store && !outcome.ok) {
         if (outcome.reason === 'timeout') {
           if (wasClaimed) {
-            record('markUnresolved', () => store!.markUnresolved(entry.job.jobId, { reason: 'timeout' }))
-            if (isNavigationJobKind(entry.job.kind)) record('applyCooldown', () => store!.applyCooldown(entry.job.site))
+            record('markUnresolved', () => store!.markUnresolved(entry.organization, entry.job.jobId, { reason: 'timeout' }))
+            if (isNavigationJobKind(entry.job.kind)) record('applyCooldown', () => store!.applyCooldown(entry.organization, entry.job.site))
           } else {
-            record('markVoid', () => store!.markVoid(entry.job.jobId))
+            record('markVoid', () => store!.markVoid(entry.organization, entry.job.jobId))
           }
         } else if (outcome.reason === 'extension-not-connected') {
-          record('markVoid', () => store!.markVoid(entry.job.jobId))
+          record('markVoid', () => store!.markVoid(entry.organization, entry.job.jobId))
         } else if (!wasClaimed) {
-          record('markVoid', () => store!.markVoid(entry.job.jobId))
+          record('markVoid', () => store!.markVoid(entry.organization, entry.job.jobId))
         }
       }
       deliver?.(outcome)
@@ -456,6 +525,11 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
       return summary
     }
     for (const row of pending) {
+      // 行里的组织必须是合法 id:被改坏的行还原不出所属组织,留在原地不派发(fail-closed),绝不猜成 local
+      if (!isBridgeOrganization(row.organization)) {
+        process.stderr.write(`[bridge] 账本恢复跳过组织非法的作业 ${row.id}\n`)
+        continue
+      }
       const expired = row.timeout_at !== null && row.timeout_at <= now()
       let job: ExtensionJob | null = null
       try {
@@ -466,6 +540,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
         if (!expired && job) {
           const entry: QueuedJob = {
             job,
+            organization: row.organization,
             resolve: null as unknown as (o: SubmitOutcome) => void,
             timer: null,
             claimedOrigin: row.claimed_origin ?? undefined,
@@ -478,14 +553,15 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
           inFlight.set(row.id, entry)
           summary.rehydratedInFlight++
         } else {
-          record('markUnresolved', () => store!.markUnresolved(row.id, { reason: 'timeout' }))
-          if (isNavigationJobKind(row.kind as ExtensionJobKind)) record('applyCooldown', () => store!.applyCooldown(row.site))
+          record('markUnresolved', () => store!.markUnresolved(row.organization, row.id, { reason: 'timeout' }))
+          if (isNavigationJobKind(row.kind as ExtensionJobKind)) record('applyCooldown', () => store!.applyCooldown(row.organization, row.site))
           summary.settledUnresolved++
         }
       } else {
         if (!expired && job) {
           const entry: QueuedJob = {
             job,
+            organization: row.organization,
             resolve: null as unknown as (o: SubmitOutcome) => void,
             timer: null,
           }
@@ -496,7 +572,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
           if (!dispatchToParked(entry)) queue.push(entry)
           summary.requeued++
         } else {
-          record('markVoid', () => store!.markVoid(row.id))
+          record('markVoid', () => store!.markVoid(row.organization, row.id))
           summary.voidedStale++
         }
       }
@@ -509,8 +585,19 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
    * 为挂载形态(查询式 results——gotry-backend 内核只支持精确路由,jobId 走 query)。
    * Origin 白名单校验内置于两种形态(远程形态同样强制:网页跨域请求必带邪恶 Origin)。
    */
-  function makeHandler(prefix: string, resultsViaQuery: boolean, statusExtra?: () => Record<string, unknown>) {
-    return (req: IncomingMessage, res: ServerResponse): void => {
+  function makeHandler(prefix: string, resultsViaQuery: boolean, mounted: boolean, statusExtra?: () => Record<string, unknown>) {
+    return (req: IncomingMessage, res: ServerResponse, caller?: { organization: string }): void => {
+      // 组织只来自挂载宿主在鉴权之后传入的 caller(loopback 桥恒为 local),**从不读请求体或请求头**;
+      // 非法组织先于一切 403,不碰任何状态
+      // 传了 caller 就必须带合法组织(缺字段/null 也算非法,绝不悄悄回落成 local);没传 caller = 单车道
+      const requested: unknown = mounted ? (caller === undefined ? BRIDGE_DEFAULT_ORGANIZATION : caller.organization) : BRIDGE_DEFAULT_ORGANIZATION
+      if (!isBridgeOrganization(requested)) {
+        res.statusCode = 403
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ ok: false, error: 'organization-invalid' }))
+        return
+      }
+      const organization = requested
       if (closed) { res.statusCode = 503; res.end(); return }
       const urlPath = (req.url ?? '').split('?')[0]
       const path = prefix && urlPath.startsWith(prefix) ? urlPath.slice(prefix.length) : urlPath
@@ -528,7 +615,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
       // 一切携带白名单扩展 Origin 的请求都刷新 lastSeen,否则 45s 后误判扩展掉线;
       // 无 Origin 的诊断 GET(/health /status)不记心跳,curl 探活不能伪造「扩展在线」
       if (originTrusted) {
-        lastSeenAt = now()
+        lastSeenAt.set(organization, now())
       }
       const finish = (code: number, body: unknown): void => {
         res.statusCode = code
@@ -541,8 +628,8 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
       }
       if (req.method === 'GET' && path === '/status') {
         finish(200, {
-          ok: true, protocol: BRIDGE_PROTOCOL, ...stats(),
-          extensionConnected: extensionConnected(),
+          ok: true, protocol: BRIDGE_PROTOCOL, ...stats(organization),
+          extensionConnected: extensionConnected(organization),
           ...(statusExtra ? statusExtra() : {}),
         })
         return
@@ -565,13 +652,13 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
           })()
           // 客户端注册落账(store 形态):轮询即刷新 origin/capabilities/last_seen(bridge_clients upsert)
           if (pollerInfo.clientId) {
-            record('upsertClient', () => store!.upsertClient(pollerInfo.clientId!, origin as string, [...(pollerInfo.capabilities ?? [])]))
+            record('upsertClient', () => store!.upsertClient(organization, pollerInfo.clientId!, origin as string, [...(pollerInfo.capabilities ?? [])]))
           }
-          const next = takeMatching(pollerInfo.capabilities, origin as string, pollerInfo.clientId)
+          const next = takeMatching(pollerInfo.capabilities, origin as string, pollerInfo.clientId, organization)
           if (next) { finish(200, { job: next.job }); return }
           // 长轮询:hold ≤ JOBS_LONG_POLL_MS(必须 < MV3 SW 30s 存活窗口,每次响应都续命);
           // 新 job 提交时即时唤醒 parked 取活者(见 dispatchToParked)
-          const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerInfo.capabilities, origin: origin as string, clientId: pollerInfo.clientId }
+          const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerInfo.capabilities, origin: origin as string, clientId: pollerInfo.clientId, organization }
           const parkTimer = setTimeout(() => {
             const i = parked.findIndex((p) => p.res === res)
             if (i >= 0) parked.splice(i, 1)
@@ -605,6 +692,13 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
             finish(400, { ok: false, error: '回包不是 JSON' })
             return
           }
+          // 组织边界先于一切(含下面的 Origin/客户端校验):jobId 在内存或账本里属于另一个组织,
+          // 就答得与未知作业一模一样(404 unknown-job),但**什么都不写**——不落孤儿行、不动在飞作业
+          // (它自己的合法回包照常闭环),也不泄露「这个 id 存在」。
+          if (belongsToAnotherOrganization(jobId, organization)) {
+            finish(404, { ok: false, error: 'unknown-job' })
+            return
+          }
           const assigned = inFlight.get(jobId)
           if (assigned?.claimedOrigin && assigned.claimedOrigin !== origin) {
             finish(403, { ok: false, error: '作业由另一扩展 Origin 领取' })
@@ -617,14 +711,14 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
           // 未知 jobId(批次 A):不再 200 静默丢弃——404 明示,孤儿回包内容落账
           // (status='unresolved',result_json 保留)供对账。扩展 postResult 本就有
           // catch 且不检查状态码(extension/background.js),协议兼容零改动。
-          const known = assigned !== undefined || queue.some((q) => q.job.jobId === jobId)
+          const known = assigned !== undefined || queue.some((q) => q.job.jobId === jobId && q.organization === organization)
           if (!known) {
-            record('orphan-result', () => store!.recordOrphanResult(jobId, parsed))
+            record('orphan-result', () => store!.recordOrphanResult(organization, jobId, parsed))
             finish(404, { ok: false, error: 'unknown-job' })
             return
           }
           finish(200, { ok: true })
-          resolveJob(jobId, parsed)
+          resolveJob(organization, jobId, parsed)
         })
         return
       }
@@ -636,14 +730,31 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     port: 0,
     extensionConnected,
     stats,
-    handleRequest: makeHandler('', false),
-    handleMountedRequest: makeHandler('/v1/session/bridge', true),
+    forOrganization(organization) {
+      const bound = assertOrganizationId(organization)
+      return {
+        get port() { return queueHandle.port },
+        extensionConnected: () => extensionConnected(bound),
+        // 先展开调用方的选项、再盖上绑定的组织:下游传什么 organization 都改不了提交去向
+        submit: (job, submitOpts) => queueHandle.submit(job, { ...submitOpts, organization: bound }),
+        // 句柄只是视图,共享队列的生命周期归创建它的宿主
+        close: () => Promise.resolve(),
+      }
+    },
+    handleRequest: makeHandler('', false, false),
+    handleMountedRequest: makeHandler('/v1/session/bridge', true, true),
     ...(store ? { recoverOnBoot } : {}),
     submit(job, submitOpts = {}) {
       const extensionWaitMs = submitOpts.extensionWaitMs ?? DEFAULT_EXTENSION_WAIT_MS
       const timeoutMs = submitOpts.timeoutMs ?? job.timeoutMs ?? 30_000
       const full: ExtensionJob = { jobId: randomUUID(), ...job }
       return new Promise<SubmitOutcome>((resolve) => {
+        // 组织只能是合法 id:非法的在碰账本/队列之前就失败(fail-closed)
+        const organization: unknown = submitOpts.organization === undefined ? BRIDGE_DEFAULT_ORGANIZATION : submitOpts.organization
+        if (!isBridgeOrganization(organization)) {
+          resolve({ ok: false, reason: 'bridge-unavailable', summary: '指定的组织标识无效' })
+          return
+        }
         if (closed) { resolve({ ok: false, reason: 'bridge-unavailable', summary: '扩展桥已关闭' }); return }
         if (submitOpts.preferredOrigin && !extensionOrigins.has(submitOpts.preferredOrigin)) {
           resolve({ ok: false, reason: 'bridge-unavailable', summary: '指定扩展 Origin 不在桥白名单' })
@@ -657,14 +768,14 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
         // 绝不派发无账作业。桌面纯内存形态此步整体跳过,行为零变化。
         if (store) {
           try {
-            store.insertQueuedJob(full, now() + timeoutMs)
+            store.insertQueuedJob(organization, full, now() + timeoutMs)
           } catch (e) {
             resolve({ ok: false, reason: 'bridge-unavailable', summary: `桥账本写入失败,作业不入队:${e instanceof Error ? e.message : String(e)}` })
             return
           }
-          if (isNavigationJobKind(full.kind)) record('noteSiteHit', () => store!.noteSiteHit(full.site))
+          if (isNavigationJobKind(full.kind)) record('noteSiteHit', () => store!.noteSiteHit(organization, full.site))
         }
-        const entry: QueuedJob = { job: full, resolve: null as unknown as (o: SubmitOutcome) => void, timer: null, preferredOrigin: submitOpts.preferredOrigin, preferredClientId: submitOpts.preferredClientId }
+        const entry: QueuedJob = { job: full, organization, resolve: null as unknown as (o: SubmitOutcome) => void, timer: null, preferredOrigin: submitOpts.preferredOrigin, preferredClientId: submitOpts.preferredClientId }
         const settle = armSettle(entry, resolve)
         entry.resolve = settle
         entry.timer = setTimeout(() => {
@@ -682,7 +793,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
         let waited = 0
         const waitTimer = setInterval(() => {
           waited += 250
-          if (queueHandle.extensionConnected()) { clearInterval(waitTimer); return }
+          if (extensionConnected(organization)) { clearInterval(waitTimer); return }
           if (waited >= extensionWaitMs) {
             clearInterval(waitTimer)
             settle({

@@ -416,6 +416,11 @@ export interface SessionDidaQuery {
    * 远程扩展经鉴权面连入;缺省走 loopback 懒单例(桌面形态)
    */
   bridge?: SessionJobHandle
+  /**
+   * 进程内节律闸的键(AaaS A2):缺省 = 站点,单车道行为不变。多组织形态的挂载模块传 `<组织>/<站点>`,
+   * 一个组织的检索不给另一个组织定节律,另一个组织也读不到「上一次是多久前」。
+   */
+  pacingKey?: string
 }
 
 export interface SessionDidaResult {
@@ -471,12 +476,13 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     ok: false, via: 'session-dida-portal-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
   })
 
-  // 节律闸:超间隔即拒,不发起导航
-  const last = lastCallAt.get(site) ?? 0
+  // 节律闸:超间隔即拒,不发起导航。键缺省是站点;多组织形态按组织分键(见 SessionDidaQuery.pacingKey)
+  const paceKey = q.pacingKey ?? site
+  const last = lastCallAt.get(paceKey) ?? 0
   if (Date.now() - last < MIN_INTERVAL_MS) {
     return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
   }
-  lastCallAt.set(site, Date.now())
+  lastCallAt.set(paceKey, Date.now())
 
   const entry = buildDidaEntryUrl({ entryUrl: q.entryUrl })
   if (!entry.ok || !entry.url) {
