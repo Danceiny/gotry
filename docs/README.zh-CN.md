@@ -122,7 +122,7 @@
 | [design/p6-founder-decision-brief.md](design/p6-founder-decision-brief.zh-CN.md) | P6 创始人决策简报（issue #137，M6-2）：M6 Entry 两个硬前置与现状、方案要点、风险、是/否/修改稿问题清单——只为决策服务，不当回执 |
 | [design/m5-supplier-agreement-matrix.md](design/m5-supplier-agreement-matrix.zh-CN.md) | M5-0 HotelByte 供应链协议可填矩阵（issue #136）：钉死的工程事实加 A/C–J 具名值字段，以及填满后如何流入 M5 Entry |
 | [design/write-gate-production-design.md](design/write-gate-production-design.zh-CN.md) | M5 WriteGate 生产化 proposal（issue #225/#136）：HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
-| [design/aaas-security-design.md](design/aaas-security-design.zh-CN.md) | AaaS 威胁模型（proposal，#674 A0）：资产、信任边界、跨租户/凭证/DoS 威胁，以及每项的控制措施与证明阶段 |
+| [design/aaas-security-design.md](design/aaas-security-design.zh-CN.md) | AaaS 威胁模型（living，#674 A0）：资产、信任边界、跨租户/凭证/DoS 威胁，以及每项的控制措施与证明阶段 |
 | [design/fact-writegate-seam.md](design/fact-writegate-seam.zh-CN.md) | fact-anchor × M5 WriteGate 接缝（issue #303，#273 子切片）：读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231，M5 Entry 前不启封 |
 | [design/flyai-supplier-skill-design.zh-CN.md](design/flyai-supplier-skill-design.zh-CN.md) | FlyAI 八类能力、本机凭据与证据边界 |
 | [design/effect-interpreter.md](design/effect-interpreter.zh-CN.md) | 效应解译器设计（accepted，ADR-18）：词汇/韧性策略表/判定记录 |
@@ -143,7 +143,7 @@
 
 | 文档 | 关注点 |
 |---|---|
-| [rfc/aaas-rfc.md](rfc/aaas-rfc.zh-CN.md) | AaaS RFC（proposal，#674 A0）：按租户 keyed 单写者、租户模型、持久性与 RPO、部署拓扑、ADR 复审 |
+| [rfc/aaas-rfc.md](rfc/aaas-rfc.zh-CN.md) | AaaS RFC（已接受 2026-10-28，#674 A0）：按租户 keyed 单写者、租户模型、持久性与 RPO、部署拓扑、ADR 复审 |
 | [rfc/transactional-state-rfc.md](rfc/transactional-state-rfc.zh-CN.md) | 事务化状态基座 RFC（accepted 2026-08-28，ADR-15） |
 | [rfc/user-session-data-rfc.md](rfc/user-session-data-rfc.zh-CN.md) | 用户会话数据面 RFC（已立项 2026-08-28）：官方通道优先+会话补缺 |
 | [rfc/loopx-inspired-upgrades-rfc.md](rfc/loopx-inspired-upgrades-rfc.zh-CN.md) | LoopX 映射升级 RFC（accepted 2026-08-27）：四道接缝最小切片 |

@@ -271,6 +271,8 @@ export interface ServiceOptions {
   readonly ingress?: boolean
   readonly planner?: PlannerKit
   readonly provider?: TenantPlannerProvider
+  /** Wraps the tenancy the server is given (the service keeps the real one): a way to make one request fail in a chosen way. */
+  readonly wrapTenancy?: (tenancy: BookingTenancy) => BookingTenancy
 }
 
 export interface Service {
@@ -327,7 +329,7 @@ export async function makeService(fleet: Fleet, id: string, cleanups: Array<() =
     planners: options.provider ?? sharedPlannerProvider(planner.factory),
     ...(options.ingress ? { ingressBinding: binding } : {}),
   })
-  const server = await startBookingCopilotServer({ tenancy, host: '127.0.0.1', port: 0 })
+  const server = await startBookingCopilotServer({ tenancy: options.wrapTenancy ? options.wrapTenancy(tenancy) : tenancy, host: '127.0.0.1', port: 0 })
   const endpoint = `http://127.0.0.1:${server.port}/a2a/booking-copilot/turn`
   const schemaHeaders = { 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
   let closed = false

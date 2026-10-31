@@ -211,6 +211,41 @@
       "find": "login_sites_json TEXT NOT NULL DEFAULT '[]',\n  PRIMARY KEY (organization, client_id)",
       "replace": "login_sites_json TEXT NOT NULL DEFAULT '[]',\n  cookie_value TEXT,\n  PRIMARY KEY (organization, client_id)",
       "note": "a cookie-value column appears in the schema"
+    },
+    {
+      "id": "B31",
+      "file": "src/backend/modules/session-search.ts",
+      "note": "the module no longer keys the in-process pacing gate by organization (M7)",
+      "find": "        // the in-process pacing gate is keyed like the lock: one organization's searches never pace another's\n        pacingKey: lockKey,\n",
+      "replace": ""
+    },
+    {
+      "id": "B32",
+      "file": "capabilities/session-search.ts",
+      "note": "the in-process pacing gate ignores its key and paces by site alone (M7)",
+      "find": "  const paceKey = q.pacingKey ?? site\n",
+      "replace": "  const paceKey = site\n"
+    },
+    {
+      "id": "B33",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "note": "the single-column idempotency index of an older binary is not dropped on a later open (L6)",
+      "find": "  if (hasIndex(db, 'bridge_events_idem_key')) db.transaction(() => { db.exec('DROP INDEX IF EXISTS bridge_events_idem_key') }).immediate()\n",
+      "replace": ""
+    },
+    {
+      "id": "B34",
+      "file": "src/backend/modules/session-search.ts",
+      "note": "a malformed admission return is trusted: the handler dereferences it and the process is at risk (M8)",
+      "find": "      if (typeof decision !== 'object' || decision === null || typeof decision.ok !== 'boolean') throw new Error('admission_decision_malformed')\n",
+      "replace": ""
+    },
+    {
+      "id": "B35",
+      "file": "src/backend/modules/session-search.ts",
+      "note": "the organization-scoped module accepts the cdp transport (M9)",
+      "find": "  if (options.callerOrganization && resolveTransportMode() !== 'extension') throw new Error('session_search_organization_requires_extension_transport')\n",
+      "replace": ""
     }
   ]
 }

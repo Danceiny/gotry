@@ -197,7 +197,18 @@ function hasOrganizationColumn(db: Database.Database, table: string): boolean {
  */
 function migrateOrganizationDimension(db: Database.Database): void {
   const pending = (): string[] => ORGANIZATION_TABLES.filter((table) => !hasOrganizationColumn(db, table))
-  if (pending().length === 0) return
+  if (pending().length > 0) migrateTables(db, pending)
+  // An older binary recreates its single-column unique index on idem_key every time it opens the file, so a file that went
+  // new, old, new has nothing left to migrate and still holds it: one organization's key would block another's. Drop it on
+  // every open (a no-op when absent).
+  if (hasIndex(db, 'bridge_events_idem_key')) db.transaction(() => { db.exec('DROP INDEX IF EXISTS bridge_events_idem_key') }).immediate()
+}
+
+function hasIndex(db: Database.Database, name: string): boolean {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(name) !== undefined
+}
+
+function migrateTables(db: Database.Database, pending: () => string[]): void {
   db.transaction(() => {
     for (const table of pending()) {
       if (table === 'bridge_jobs' || table === 'bridge_events') {
@@ -238,10 +249,13 @@ export class BridgeLedgerStore implements BridgeJobStore {
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath)
     this.db.pragma('journal_mode = WAL')
-    this.db.pragma('busy_timeout = 5000')
+    // Opening a legacy file needs the write lock once (migration, index changes). A rolling deploy can have the old process
+    // writing through it, so the open waits longer than a normal write does and then drops back.
+    this.db.pragma('busy_timeout = 30000')
     this.db.exec(TABLES)
     migrateOrganizationDimension(this.db)
     this.db.exec(INDEXES)
+    this.db.pragma('busy_timeout = 5000')
   }
 
   /** write-before-submit:入队前先落 queued(提交失败 = 调用方不得派发) */

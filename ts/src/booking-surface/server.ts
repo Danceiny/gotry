@@ -71,9 +71,17 @@ export interface BookingTenantComposition {
 
 export type BookingCopilotComposition = BookingSharedComposition | BookingTenantComposition
 
-export type BookingCopilotServerOptions = BookingCopilotComposition & {
-  /** Deployment credential shared only with the HotelByte BFF. Required for the shared form; the tenant form authenticates through its authenticator. */
-  apiKey?: string
+/**
+ * The shared form needs the deployment key (a missing one is a compile error, as it always was); the tenant form takes
+ * none and authenticates through its tenancy (`apiKey?: never`).
+ */
+export type BookingCopilotServerOptions = (
+  | (BookingSharedComposition & {
+    /** Deployment credential shared only with the HotelByte BFF. */
+    apiKey: string
+  })
+  | (BookingTenantComposition & { apiKey?: never })
+) & {
   host?: string
   port?: number
   maxBodyBytes?: number
@@ -491,7 +499,7 @@ function fallbackErrorEvent(task: BookingCopilotTaskState, code: string): Bookin
   }
 }
 
-function writeTypedError(res: ServerResponse, runtime: BookingCopilotTaskRuntime, task: BookingCopilotTaskState, error: unknown, requestKey?: string, includeSubmitted = false): void {
+function writeTypedError(res: ServerResponse, runtime: BookingCopilotTaskRuntime, task: BookingCopilotTaskState, error: unknown, requestKey?: string, includeSubmitted = false, isTenantFault: (error: unknown) => boolean = () => false): void {
   const code = normalizeBookingErrorCode(error)
   // Provider/adapter exceptions can contain response bodies, URLs or request
   // context. Preserve only the closed code and coarse thrown-value class.
@@ -507,7 +515,9 @@ function writeTypedError(res: ServerResponse, runtime: BookingCopilotTaskRuntime
       return
     }
     write(res, runtime.emitEvent(task.taskId, decision))
-  } catch {
+  } catch (writeError) {
+    // A lease lost under the durable write is not a planner answer: nothing can be acknowledged, so the caller cuts the connection.
+    if (isTenantFault(writeError)) throw writeError
     // The stream is already committed. Emit a schema-valid, non-durable
     // typed envelope instead of silently returning an empty HTTP 200 stream.
     write(res, fallbackErrorEvent(task, code))
@@ -745,13 +755,21 @@ async function serveBookingTurn(
     // A lease lost, fenced or handed off while the stream is open cannot be told to the client as an answer: nothing
     // was acknowledged, so the connection is cut and the BFF retries the same request key on the next owner.
     if (scope.isTenantFault(error)) { res.destroy(); return }
-    writeTypedError(res, scope.runtime, task, error, activeDecisionKey, fresh)
-    const updated = scope.runtime.resumeTask(task.taskId)
-    if (updated?.phase === 'terminal' || updated?.phase === 'error') releasePlannerSession(composition, scope.sessionKey(task.taskId))
+    try {
+      writeTypedError(res, scope.runtime, task, error, activeDecisionKey, fresh, scope.isTenantFault)
+      const updated = scope.runtime.resumeTask(task.taskId)
+      if (updated?.phase === 'terminal' || updated?.phase === 'error') releasePlannerSession(composition, scope.sessionKey(task.taskId))
+    } catch (faultWhileAnswering) {
+      // The lease went while the planner's error was being recorded: the same rule as above, and never an escaped rejection.
+      if (!scope.isTenantFault(faultWhileAnswering)) throw faultWhileAnswering
+      res.destroy()
+    }
   } finally { res.end() }
 }
 
 export function startBookingCopilotServer(options: BookingCopilotServerOptions): Promise<BookingCopilotServerHandle> {
+  // The shared form's key is checked first, exactly as before the tenant form existed.
+  if (!options.tenancy && !options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
   if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
     return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
   }
@@ -769,7 +787,6 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptions):
     }
     composition = { tenancy: options.tenancy, ingressMode }
   } else {
-    if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
     if (!options.runtime || !options.plannerFactory) {
       return Promise.reject(new Error('booking_copilot_runtime_and_planner_required'))
     }
@@ -804,7 +821,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptions):
   const runningIdentity = runtimeIdentity()
 
   const server = createServer((req, res) => {
-    void bookingCopilotTrafficHandler({
+    const handled = bookingCopilotTrafficHandler({
       ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       composition,
       maxBodyBytes,
@@ -812,6 +829,12 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptions):
       ingressMode,
       runningIdentity,
     })(req, res)
+    if (!options.tenancy) { void handled; return }
+    // One replica serves every tenant: whatever escapes one request ends that request, never the process.
+    handled.catch((error: unknown) => {
+      console.error('[booking-copilot] request failed:', JSON.stringify({ thrownType: error instanceof Error ? error.name : typeof error }))
+      if (!res.writableEnded) res.destroy()
+    })
   })
   let closePromise: Promise<void> | undefined
 

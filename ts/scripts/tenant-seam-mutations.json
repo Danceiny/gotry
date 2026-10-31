@@ -169,6 +169,20 @@
       "note": "a tenancy can be combined with a shared key (H2)",
       "find": "    if (options.apiKey) return Promise.reject(new Error('booking_copilot_tenancy_api_key_conflict'))\n",
       "replace": ""
+    },
+    {
+      "id": "S25",
+      "file": "src/booking-surface/server.ts",
+      "note": "the answering catch rethrows a tenant fault instead of cutting the connection, so the listener's last resort has to catch it (F11)",
+      "find": "      if (!scope.isTenantFault(faultWhileAnswering)) throw faultWhileAnswering\n      res.destroy()\n",
+      "replace": "      throw faultWhileAnswering\n"
+    },
+    {
+      "id": "S26",
+      "file": "src/booking-surface/server.ts",
+      "note": "the listener of the tenant form does not contain an error that escapes a request (F12)",
+      "find": "    handled.catch((error: unknown) => {\n      console.error('[booking-copilot] request failed:', JSON.stringify({ thrownType: error instanceof Error ? error.name : typeof error }))\n      if (!res.writableEnded) res.destroy()\n    })\n",
+      "replace": "    void handled\n"
     }
   ]
 }

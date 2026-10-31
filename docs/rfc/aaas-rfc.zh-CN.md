@@ -3,7 +3,7 @@
 # RFC：GoTry 多用户 Agent 服务化（AaaS）——状态、身份与部署
 
 > 定位：把 GoTry 做成多用户共用的单一云端服务的 A0 设计提案——状态层、租户模型、持久性、身份、部署拓扑，以及由此触发的 ADR 复审。
-> 状态：**proposal**（[#674](https://github.com/Danceiny/gotry/issues/674) 的 A0，2026-10-26 起草）。本文任何内容都尚未采纳；在 founder 接受本 RFC 之前，每条 ADR 保持现有文本。
+> 状态：**accepted**（[#674](https://github.com/Danceiny/gotry/issues/674) 的 A0，2026-10-26 起草，2026-10-28 接受）。founder 合并了 [#675](https://github.com/Danceiny/gotry/pull/675) 中的提案并指示开工；未给出任何逐项改动，因此 Q1–Q7 按建议成立（§8.1）；任何改动只重新打开它点名的问题。
 > 上游：founder 2026-10-21 的决定（#674）；[architecture](../architecture.zh-CN.md) §8（ADR-14/15/16/17/23）与 §10（D-15）；[总纲](../gotry-master-outline.zh-CN.md) §2 复用矩阵；[事务化状态 RFC](transactional-state-rfc.zh-CN.md) TS-5；[LoopX 映射 RFC](loopx-inspired-upgrades-rfc.zh-CN.md) §6.5。
 > 下游：#674 的 A1–A4 工作项；ADR 复审结论，接受后吸收进 architecture §8 与 [ADR 展开](../adr-expansions.zh-CN.md)；[AaaS 安全设计](../design/aaas-security-design.zh-CN.md)。
 > 部署事实：hotel-be `docs/architecture/gotry-backend-deployment-architecture.md`，最近核实于 2026-10-24。约束编号 C1–C16 均指该文档。
@@ -16,7 +16,7 @@
 - **持久性。** 明确声明 RPO，而不是暗示「不丢」。写路径封存期间，可接受异步的异地流式复制（RPO 为秒级）。在 AaaS 上启封 M5 之前，WriteGate outbox 必须先做到 RPO = 0。
 - **拓扑。** 在 BFF 之后部署专用的内网 gotry 层：N 个副本，按租户亲和路由。由一条新的边界 ADR 为该层取代 C2。浏览器可达面保持为零（C16）。
 - **ADR 复审。** ADR-14、ADR-15、ADR-17 与 ADR-23 成立，并补上 §5 的增量。ADR-16 保持冻结，其后置的同步与 claim 事项就此激活。
-- **决策请求。** 请回答 §8.1 的 Q1–Q7。接受之后才开工 A1。事实项 F-1–F-4 以只读方式并行查明。
+- **决策。** §8.1 的 Q1–Q7 已于 2026-10-28 按建议接受，A1 已开工。事实项 F-1–F-4 以只读方式并行查明。
 
 ## 1. 问题
 
@@ -117,7 +117,7 @@ founder 于 2026-10-21 立项 AaaS（#674）。这满足了 D-15 的「获批的
 
 ```text
 <stateRoot>/orgs/<org_id>/
-  gotry-state/bridge.db              # 每个组织一本桥账本
+  gotry-state/bridge.db              # 目标布局；A2 落地形态：每个节点一份共享账本、带组织列
   tenants/<tenant_id>/               # 所有权与复制的单位
     gotry-state/gotry-state.db       # ADR-15 账本，tenant_id = <tenant_id>
     ...                              # planner 工作文件、工单、artifact（F-2）
@@ -163,7 +163,7 @@ lease record: { key: "<org_id>/<tenant_id>", owner: <replica_id>, epoch: <int>, 
 - **在单一接缝处授权。** 每个 handler 只在接缝处解析一次 `(organization, tenant)`。账本句柄是绑定租户的对象。没有任何 API 接受裸 tenant id。
 - **配额与计量**按租户、按组织计：并发轮次、轮次速率、按冻结价目表（ADR-20）计价的 LLM token 与成本预算、桥 job 速率、按组织的分站点节律，以及账本大小。
 - **A2 退出套件。** 伪造的租户字段、他人的 `taskHandle` 或 `requestKey`、形如路径的 id，以及跨组织的桥回包，全部被拒。
-- **A2 的落地形态。** `deriveSeamTenant` 是服务里唯一派生租户的地方：输入是注入的 `CallerAuthenticator` 所担保的调用方，输出是不透明的 `SeamTenant`，所有配额 API 都要求它。一个请求先被认证、被放进自己的租户、按配额准入（typed 429 发生在读取请求体、取得租约或启动 planner 之前），再由 `TenantRouter.openTenant` 返回的带守卫账本来服务。决策工作在 `handle.runAsync` 内运行，因此交接会排空它，流中途失去租约会切断连接，而不是确认。桥账本与 job 匹配带有组织维度。BFF 在线路上如何证明用户身份，此处不作决定：在 A3 提供生产认证器之前，部署继续运行共享 key 形态的服务面。证据：run-all §93 至 §95。
+- **A2 的落地形态。** `deriveSeamTenant` 是服务里唯一派生租户的地方：输入是注入的 `CallerAuthenticator` 所担保的调用方，输出是不透明的 `SeamTenant`，所有配额 API 都要求它。一个请求先被认证、被放进自己的租户、按配额准入（typed 429 发生在读取请求体、取得租约或启动 planner 之前，针对并发、速率与 LLM 预算；账本大小的拒绝在租户打开之后才判定），再由 `TenantRouter.openTenant` 返回的带守卫账本来服务。决策工作在 `handle.runAsync` 内运行，因此交接会排空它，流中途失去租约会切断连接，而不是确认；planner 报错恰好撞上丢失的租约时同样只切断那一个连接，任何逃出单个请求的错误都只结束该请求，绝不结束副本进程。桥账本与 job 匹配带有组织维度（每个节点一份带 `organization` 列的共享 `bridge.db`；旧文件的迁移是单向的，所以只有当所有行都是 `local` 时才能回滚，否则恢复首次启动新二进制之前做好的副本）。BFF 在线路上如何证明用户身份，此处不作决定：在 A3 提供生产认证器之前，部署继续运行共享 key 形态的服务面。证据：run-all §93 至 §95。
 
 ### 4.5 部署拓扑（A3）
 
@@ -269,7 +269,7 @@ C2 是 hotel-be 的部署约束，不是 ADR。A3 边界 ADR 为 gotry 层取代
 
 ### 8.1 founder 决策
 
-| # | 问题 | 建议 |
+| # | 问题 | 决策（2026-10-28 按建议接受） |
 |---|---|---|
 | Q1 | 是否把「按租户 keyed 单写者」作为 ADR-15 重新表述后的边界？ | 是 |
 | Q2 | 账本 owner 是否为人，principal scope 作为属性？ | 是 |
@@ -308,7 +308,7 @@ C2 是 hotel-be 的部署约束，不是 ADR。A3 边界 ADR 为 gotry 层取代
 - **状态纪律。** A1 的全部测试跑在隔离 state root 上，绝不碰 founder 的运行时状态。
 - **写路径。** WriteGate 行为不变。预订写入保持封存。
 - **语言与 harness。** 不引入 Python；dsh 跟 main，不做修改。
-- **同提交规则。** 接受后，所属权威面在同一提交中更新：architecture §8 与 §10、ADR 展开、roadmap 与总纲。
+- **同提交规则。** 接受时，所属权威面已在同一提交中更新：architecture §8、ADR 展开、roadmap、总纲与决策队列。architecture §10（D-15）早已记下触发条件，保持不变。
 
 ## 附录 A. 来源
 

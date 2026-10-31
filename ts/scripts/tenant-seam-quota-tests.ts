@@ -245,10 +245,13 @@ check('L1 measured usage is priced by the frozen table: fresh input, cache-read 
   assert.equal(q.snapshot().organizations[0]!.llmTokens, 450_000, 'the organization is charged too')
 })
 
-check('L2 an unpriced model or a malformed count is refused and charges nothing', () => {
+check('L2 an unpriced model, a malformed count or a report of zero tokens is refused and charges nothing', () => {
   const q = quotas()
   const t = tenantOf('acme', 'u1')
   assert.throws(() => q.recordLlmUsage(t, 'model-nobody-priced', { inputTokens: 1, outputTokens: 1 }), /no entry for model/)
+  // no completion costs nothing: a relay that answers zeros is not measuring, and the caller must then charge the worst case
+  assert.throws(() => q.recordLlmUsage(t, MODEL, { inputTokens: 0, outputTokens: 0 }), /zero tokens/)
+  assert.throws(() => q.recordLlmUsage(t, MODEL, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }), /zero tokens/)
   for (const bad of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2]) {
     assert.throws(() => q.recordLlmUsage(t, MODEL, { inputTokens: bad, outputTokens: 1 }), RangeError, String(bad))
     assert.throws(() => q.recordLlmUsage(t, MODEL, { inputTokens: 1, outputTokens: bad }), RangeError, String(bad))
@@ -346,7 +349,7 @@ check('I1 a hot tenant is refused alone: its flood changes nothing for a neighbo
   assert.equal(snapshotOf(q, hot)!.rejected.concurrent_turns, 998)
 })
 
-check('I2 a refusal reserves nothing: no slot, no rate entry, no counter moves except the refusal count', () => {
+check('I2 a refusal reserves nothing: no slot, no rate entry, no account for a fresh tenant, no counter moves except the organization\'s refusal count', () => {
   const q = quotas()
   const [u1, u2, u3] = [tenantOf('acme', 'u1'), tenantOf('acme', 'u2'), tenantOf('acme', 'u3')]
   q.admitTurn(u1)
@@ -356,7 +359,7 @@ check('I2 a refusal reserves nothing: no slot, no rate entry, no counter moves e
   refusal(() => q.admitTurn(u3))
   const after = q.snapshot()
   assert.equal(after.globalActiveTurns, 3)
-  assert.deepEqual(snapshotOf(q, u3), { key: `acme/${u3.ledgerTenant}`, activeTurns: 0, turnsInWindow: 0, llmTokens: 0, llmCostUsd: 0, bridgeJobs: 0, ledgerBytes: 0, rejected: { concurrent_turns: 0, turn_rate: 0, llm_tokens: 0, llm_cost: 0, bridge_jobs: 0, ledger_size: 0 } })
+  assert.equal(snapshotOf(q, u3), undefined, 'a refused fresh tenant is not remembered at all')
   const organization = after.organizations.find((entry) => entry.key === 'acme')!
   assert.equal(organization.activeTurns, 3)
   assert.equal(organization.turnsInWindow, 3)
@@ -374,10 +377,11 @@ check('I3 counters are keyed by the organization and the HMAC tenant id and hold
   for (const secret of ['alice', 'example.com', 'idp.example', 'booking:read']) assert.ok(!text.includes(secret), `snapshot leaks ${secret}`)
 })
 
-check('I4 idle accounts are swept, accounts holding a ledger size or a live turn are not', () => {
+check('I4 idle accounts are swept and take their ledger size out of the organization total; a live turn keeps its account', () => {
   const q = quotas()
   const keeper = tenantOf('acme', 'keeper')
   q.observeLedgerBytes(keeper, 10)
+  assert.equal(q.snapshot().organizations.find((entry) => entry.key === 'acme')?.ledgerBytes, 10)
   const live = tenantOf('acme', 'live')
   const held = q.admitTurn(live)
   for (let i = 0; i < 1_100; i += 1) {
@@ -386,8 +390,28 @@ check('I4 idle accounts are swept, accounts holding a ledger size or a live turn
   }
   const keys = new Set(q.snapshot().tenants.map((entry) => entry.key))
   assert.ok(keys.size < 200, `idle tenants were swept at the thousandth admission (${keys.size} left of 1102)`)
-  assert.ok(keys.has(`acme/${keeper.ledgerTenant}`) && keys.has(`acme/${live.ledgerTenant}`))
+  assert.ok(!keys.has(`acme/${keeper.ledgerTenant}`), 'an idle tenant is swept although its ledger has a size')
+  assert.ok(keys.has(`acme/${live.ledgerTenant}`), 'a live turn keeps its account')
+  assert.equal(q.snapshot().organizations.find((entry) => entry.key === 'acme')?.ledgerBytes, 0, 'the swept ledger left the organization total')
   held.release()
+})
+
+check('I6 a fresh tenant that is refused leaves no account behind, and refused attempts advance the sweep', () => {
+  // rates are out of the way: only the organization's concurrency cap (3) refuses here
+  const q = quotas({ ...POLICY, tenant: { ...POLICY.tenant, turns: { limit: 1_000_000, windowMs: 1_000 } }, organization: { ...POLICY.organization, turns: { limit: 1_000_000, windowMs: 1_000 } } })
+  const idleTenants = Array.from({ length: 10 }, (_, n) => tenantOf('acme', `early-${n}`))
+  for (const tenant of idleTenants) q.admitTurn(tenant).release()
+  const holders = [tenantOf('acme', 'h1'), tenantOf('acme', 'h2'), tenantOf('acme', 'h3')].map((tenant) => q.admitTurn(tenant))
+  // the organization cap (3) is full: every further tenant is refused, and none of them may be remembered
+  now = 1_000_000
+  for (let i = 0; i < 1_100; i += 1) {
+    refusal(() => q.admitTurn(tenantOf('acme', `flood-${i}`)))
+    assert.ok(q.snapshot().tenants.length <= 13, 'a refused tenant was registered')
+  }
+  const keys = q.snapshot().tenants.map((entry) => entry.key)
+  assert.ok(!idleTenants.some((tenant) => keys.includes(`acme/${tenant.ledgerTenant}`)), 'the refused attempts advanced the sweep: the idle tenants are gone')
+  assert.equal(keys.length, 3, 'only the three live turns hold an account')
+  for (const holder of holders) holder.release()
 })
 
 check('I5 a refusal is a typed tenant-state error with a code, a scope and a hint, and its message names no person', () => {

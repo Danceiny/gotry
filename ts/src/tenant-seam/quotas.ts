@@ -10,8 +10,8 @@
  * Dimensions: concurrent turns, turn rate, LLM tokens and cost (priced by the frozen ADR-20 table, in the same code
  * the nightly evidence uses), bridge job rate, and ledger size. Windows are rolling, driven by an injected
  * monotonic clock. The LLM budget is checked before a turn and charged after it, so it can be overshot by the
- * turns in flight: a soft cap, by design. A planner invocation that reports no usage is charged the configured worst
- * case instead of nothing, so a silent feed cannot make the budget unreachable.
+ * turns in flight: a soft cap, by design. A planner invocation that reports no usage (or zero tokens) is charged the
+ * configured worst case instead of nothing, so a silent or zero-answering feed cannot make the budget unreachable.
  *
  * State is per replica. Tenant-affine routing gives a tenant one owner, so tenant quotas hold fleet-wide; an
  * organization's quota is per replica until a shared counter is chosen (A3).
@@ -199,8 +199,9 @@ class Account {
     this.bridge = new RollingSum(limits.bridgeJobs.windowMs)
   }
 
+  /** No live turn and nothing left in any window. The ledger size is not part of it: the sweep takes it out of the organization total. */
   idle(now: number): boolean {
-    return this.active === 0 && this.ledgerBytes === 0 && this.turns.idle(now) && this.tokens.idle(now) && this.costMicro.idle(now) && this.bridge.idle(now)
+    return this.active === 0 && this.turns.idle(now) && this.tokens.idle(now) && this.costMicro.idle(now) && this.bridge.idle(now)
   }
 }
 
@@ -260,7 +261,12 @@ export class TenantQuotas {
   admitTurn(tenant: SeamTenant): TurnPermit {
     const seam = assertSeamTenant(tenant)
     const now = this.clock()
-    const tenantAccount = this.tenantAccount(seamTenantKey(seam))
+    // Every attempt counts toward the sweep, so a flood of refused attempts cannot outrun it.
+    this.maybeSweep(now)
+    const key = seamTenantKey(seam)
+    // A tenant is registered only when a turn is admitted: a fresh tenant that is refused leaves nothing behind.
+    const known = this.tenants.get(key)
+    const tenantAccount = known ?? new Account(this.policy.tenant)
     const organizationAccount = this.organizationAccount(seam.organization)
     const { policy } = this
     this.refuseIfOver(tenantAccount, 'tenant', 'concurrent_turns', tenantAccount.active, policy.tenant.concurrentTurns, CONCURRENCY_RETRY_AFTER_MS)
@@ -272,12 +278,12 @@ export class TenantQuotas {
     this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_tokens', organizationAccount.tokens, now, policy.organization.llm.tokens)
     this.refuseIfOverRolling(organizationAccount, 'organization', 'llm_cost', organizationAccount.costMicro, now, Math.round(policy.organization.llm.costUsd * MICRO), MICRO)
     this.refuseIfOver(organizationAccount, 'global', 'concurrent_turns', this.globalActive, policy.globalConcurrentTurns, CONCURRENCY_RETRY_AFTER_MS)
+    if (!known) this.tenants.set(key, tenantAccount)
     tenantAccount.active += 1
     organizationAccount.active += 1
     this.globalActive += 1
     tenantAccount.turns.add(now, 1)
     organizationAccount.turns.add(now, 1)
-    this.maybeSweep(now)
     let released = false
     return {
       release: () => {
@@ -290,10 +296,14 @@ export class TenantQuotas {
     }
   }
 
-  /** Charges measured usage, priced by the frozen table. Throws for an unpriced model or malformed counts; the caller then charges the worst case. */
+  /**
+   * Charges measured usage, priced by the frozen table. Throws for an unpriced model, malformed counts or a report of zero
+   * tokens (no completion costs nothing, so a relay that answers zeros is not measuring); the caller then charges the worst case.
+   */
   recordLlmUsage(tenant: SeamTenant, model: string, usage: MeasuredLlmUsage): void {
     const seam = assertSeamTenant(tenant)
     const priced = priceMeasuredUsage(model, usage, this.priceTable)
+    if (priced.tokens === 0) throw new RangeError('a usage report of zero tokens proves nothing')
     this.charge(seam, priced.tokens, Math.round(priced.costUsd * MICRO))
   }
 
@@ -411,8 +421,13 @@ export class TenantQuotas {
   private maybeSweep(now: number): void {
     this.admissions += 1
     if (this.admissions % SWEEP_EVERY !== 0) return
-    for (const accounts of [this.tenants, this.organizations]) {
-      for (const [key, account] of accounts) if (account.idle(now)) accounts.delete(key)
+    for (const [key, account] of this.tenants) {
+      if (!account.idle(now)) continue
+      this.tenants.delete(key)
+      // The tenant's ledger leaves the organization's total with its account; its next turn observes the size again.
+      const organizationAccount = this.organizations.get(key.slice(0, key.indexOf('/')))
+      if (organizationAccount) organizationAccount.ledgerBytes -= account.ledgerBytes
     }
+    for (const [key, account] of this.organizations) if (account.idle(now) && account.ledgerBytes === 0) this.organizations.delete(key)
   }
 }

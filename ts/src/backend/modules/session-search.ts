@@ -42,7 +42,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { BackendModule } from '../kernel.ts'
-import { sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
+import { resolveTransportMode, sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
 import { BRIDGE_DEFAULT_ORGANIZATION, CLIENT_ID_RE, createBridgeJobQueue, EXTENSION_ORIGINS, isBridgeOrganization, type BridgeJobQueue, type SessionJobHandle } from '../../../capabilities/session/extension-bridge.ts'
 import { openBridgeLedgerStore, type BridgeEventInput, type BridgeLedgerStore } from '../../../capabilities/session/bridge-ledger.ts'
@@ -327,6 +327,9 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
+  // AaaS A2: the cdp transport drives the host's own Chrome whoever asks, so a second organization could ride it. The
+  // organization-scoped form therefore runs on the extension bridge only (the single lane keeps the cdp opt-in).
+  if (options.callerOrganization && resolveTransportMode() !== 'extension') throw new Error('session_search_organization_requires_extension_transport')
   const search = options.search ?? sessionDidaSearch
   // verdict 结构化日志通道(#272):缺省 stderr(服务运行时既见面),测试注入收集器
   const verdictEmit = options.verdictLog ?? ((line: string) => { process.stderr.write(`${line}\n`) })
@@ -403,14 +406,16 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     let decision: SessionAdmissionDecision
     try {
       decision = options.admission(req, organization)
+      // a return that is not a decision is an admission that could not be made: the same answer as a throw, never a crash
+      if (typeof decision !== 'object' || decision === null || typeof decision.ok !== 'boolean') throw new Error('admission_decision_malformed')
     } catch {
       sendJson(res, 503, { ok: false, error: 'admission-unavailable' })
       return null
     }
-    if (decision.ok) return decision.release ? { release: decision.release } : {}
+    if (decision.ok) return typeof decision.release === 'function' ? { release: decision.release } : {}
     const retryAfter = Number.isFinite(decision.retryAfterSeconds) ? Math.max(1, Math.ceil(decision.retryAfterSeconds)) : 1
     res.setHeader('retry-after', String(retryAfter))
-    sendJson(res, 429, { ok: false, verdict: 'quota_exceeded', error: decision.code })
+    sendJson(res, 429, { ok: false, verdict: 'quota_exceeded', error: typeof decision.code === 'string' && decision.code.length > 0 ? decision.code : 'quota_exceeded' })
     return null
   }
   const releaseAdmission = (admitted: { release?: () => void }): void => {
@@ -553,6 +558,8 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
           : {}),
         auditPath: options.auditPath,
         bridge: bridgeFor(organization),
+        // the in-process pacing gate is keyed like the lock: one organization's searches never pace another's
+        pacingKey: lockKey,
       }))
       if (result.verdict === 'cooldown') {
         res.setHeader('retry-after', '30')
