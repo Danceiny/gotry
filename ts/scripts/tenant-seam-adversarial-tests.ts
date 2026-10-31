@@ -719,6 +719,89 @@ try {
   // ---- G: metering ---------------------------------------------------------------------------------------
   console.log('-- G metering')
 
+  await check('F11 a planner error that coincides with a lost lease cuts that one connection: no error event is acknowledged, no rejection escapes, and the replica keeps serving', async () => {
+    const rejections: unknown[] = []
+    const logged: string[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    const consoleError = console.error
+    process.on('unhandledRejection', onRejection)
+    console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); consoleError(...args) }
+    try {
+      const fleet = newFleet()
+      const planner = makePlanner()
+      const a = await makeService(fleet, 'f11-a', cleanups, { planner })
+      // An ordinary provider error, raised after the lease ran out: the tenant no longer owns the ledger the error would be recorded in.
+      planner.script = async ({ text }) => {
+        if (!text.includes('fail-f11')) throw new Error('unexpected planner call')
+        fleet.advance(TTL)
+        throw new Error('provider exploded')
+      }
+      const received: string[] = []
+      const outcome = await a.postRaw(userTurn('task-f11', 'ctx-f11', 'fail-f11 find hotels as alice'), ALICE, (chunk) => received.push(chunk))
+      const events = sseEvents(received.join('')).map((event) => event.event)
+      assert.ok(!events.includes('error') && !events.includes('operation') && !events.includes('terminal'), `nothing was acknowledged: ${events.join(',')}`)
+      assert.equal(outcome.ended, 'aborted', 'the connection was cut, not ended as a finished stream')
+      await sleep(100)
+      assert.deepEqual(rejections, [], 'no rejection escaped the request')
+      assert.ok(!logged.some((line) => line.includes('request failed')), `the fault was handled where it happened, not by the listener's last resort: ${logged.join(' | ')}`)
+      assert.equal(a.quotas.snapshot().globalActiveTurns, 0, 'the slot was given back')
+      planner.script = null
+      const bob = await a.post(userTurn('task-f11-bob', 'ctx-f11-bob', 'find hotels as bob'), BOB)
+      assert.equal(bob.status, 200, 'the replica still serves other tenants')
+      assert.ok(sseEvents(bob.text).some((event) => event.event === 'operation'))
+    } finally {
+      console.error = consoleError
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+
+  await check('F12 whatever escapes a request ends that request, never the replica: a plain runtime failure while a planner error is being answered is logged and contained, and the next request is served', async () => {
+    const rejections: unknown[] = []
+    const logged: string[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    const consoleError = console.error
+    process.on('unhandledRejection', onRejection)
+    console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')) }
+    try {
+      const fleet = newFleet()
+      const planner = makePlanner()
+      const poison = { on: true }
+      const a = await makeService(fleet, 'f12-a', cleanups, {
+        planner,
+        wrapTenancy: (real) => Object.assign(Object.create(real) as BookingTenancy, {
+          beginTurn: async (caller: AuthenticatedCaller) => {
+            const scope = await real.beginTurn(caller)
+            if (!poison.on) return scope
+            // The first read of the task (admission) is real; every later one fails the way a broken database would.
+            let reads = 0
+            const runtime = new Proxy(scope.runtime, {
+              get(target, property) {
+                if (property === 'resumeTask') return (...args: unknown[]) => { reads += 1; if (reads > 1) throw new Error('plain runtime failure'); return (target.resumeTask as (...a: unknown[]) => unknown)(...args) }
+                const value = Reflect.get(target, property, target) as unknown
+                return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value
+              },
+            })
+            return { ...scope, runtime }
+          },
+        }),
+      })
+      planner.script = async () => { throw new Error('provider exploded') }
+      await a.postRaw(userTurn('task-f12', 'ctx-f12', 'find hotels as alice'), ALICE)
+      await sleep(100)
+      assert.deepEqual(rejections, [], 'no rejection escaped')
+      assert.ok(logged.some((line) => line.includes('request failed')), `the listener contained it and said so: ${logged.join(' | ')}`)
+      assert.equal(a.quotas.snapshot().globalActiveTurns, 0, 'the slot was given back')
+      poison.on = false
+      planner.script = null
+      const next = await a.post(userTurn('task-f12-next', 'ctx-f12-next', 'find hotels as alice'), ALICE)
+      assert.equal(next.status, 200, 'the same server answers the next request')
+      assert.ok(sseEvents(next.text).some((event) => event.event === 'operation'))
+    } finally {
+      console.error = consoleError
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+
   await check('G1 a planner invocation that reports nothing is charged the configured worst case; one that reports is charged what it reported', async () => {
     const fleet = newFleet()
     const contexts = new Map<string, TenantPlannerContext>()
@@ -748,6 +831,9 @@ try {
     report = (context) => context.reportUsage('model-nobody-priced', { inputTokens: 1, outputTokens: 1 })
     assert.equal((await service.post(userTurn('task-g1-c', 'ctx-g1-c', 'find hotels as alice'), ALICE)).status, 200)
     assert.equal(chargedTo(alice).llmTokens, 2 * ROOMY.unprovenInvocation.tokens + 3_500, 'an unpriced report counts as silence')
+    report = (context) => context.reportUsage(MODEL, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 })
+    assert.equal((await service.post(userTurn('task-g1-d', 'ctx-g1-d', 'find hotels as alice'), ALICE)).status, 200)
+    assert.equal(chargedTo(alice).llmTokens, 3 * ROOMY.unprovenInvocation.tokens + 3_500, 'a report of zero tokens is no proof: a relay that answers zeros is charged the worst case too')
   })
 
   await check('G2 a usage report reaches only the tenant whose invocation is running: a confused deputy charges nobody else', async () => {
@@ -816,7 +902,8 @@ try {
     const fleet = newFleet()
     const service = await makeService(fleet, 'h2', cleanups)
     const common = { host: '127.0.0.1', port: 0 }
-    await assert.rejects(startBookingCopilotServer({ ...common, tenancy: service.tenancy, apiKey: 'shared-key' }), /booking_copilot_tenancy_api_key_conflict/)
+    // the types already forbid it (`apiKey?: never` on the tenant form); the runtime still refuses what a cast lets through
+    await assert.rejects(startBookingCopilotServer({ ...common, tenancy: service.tenancy, apiKey: 'shared-key' } as never), /booking_copilot_tenancy_api_key_conflict/)
     await assert.rejects(startBookingCopilotServer({ ...common, tenancy: service.tenancy, plannerFactory: service.planner.factory } as never), /booking_copilot_tenancy_shared_conflict/)
     await assert.rejects(startBookingCopilotServer({ ...common, tenancy: service.tenancy, principal: { subject: 'p', scope: 's' } } as never), /booking_copilot_tenancy_shared_conflict/)
     await assert.rejects(startBookingCopilotServer({ ...common, tenancy: service.tenancy, ingressMode: 'bff-ingress-binding' }), /booking_copilot_ingress_mode_conflict/)
