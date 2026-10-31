@@ -1,5 +1,6 @@
 /** Production composition entry for GoTry's BFF-only Booking Copilot server. */
 
+import { AsyncResource } from 'node:async_hooks'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,9 @@ import {
 import { BookingCopilotTaskRuntime } from './runtime.ts'
 import { BOOKING_COPILOT_INGRESS_MODES, type BookingCopilotIngressMode, type BookingIngressBinding, type BookingIngressPrincipal } from './contracts.ts'
 import type { BookingTenancy, TenantPlannerProvider } from './tenancy.ts'
+import type { ManagedDshResourceLimits } from './managed-dsh-run-port.ts'
+import type { LlmTicketIssuer, LlmTicketOptions, LlmUsageReport } from '../tenant-seam/llm-broker.ts'
+import { sharedProcessTreeGovernor } from '../tenant-seam/process-governor.ts'
 import {
   startBookingCopilotServer,
   type BookingCopilotServerHandle,
@@ -132,6 +136,30 @@ export function resolveBookingCopilotTenantStartupConfig(
 }
 
 /**
+ * Ceilings for each planner process tree in the multi-tenant form (docs/rfc/aaas-rfc.md §4.8, threat S-17). Every
+ * tenant on a replica shares its CPU and memory, so one runaway child must be stopped by a limit and not by the
+ * operating system's OOM killer. These numbers are a ceiling for a runaway, not a budget, and are unreviewed: they sit
+ * well above what an idle booted planner tree costs (see docs/ops/aaas-capacity-baseline.md) and a deployment that
+ * knows better passes its own `resourceLimits`.
+ */
+export const DEFAULT_TENANT_PLANNER_RESOURCE_LIMITS: ManagedDshResourceLimits = Object.freeze({
+  heapMb: 512,
+  maxRssBytes: 1536 * 1024 * 1024,
+  maxCpuSeconds: 120,
+  maxLineChars: 8 * 1024 * 1024,
+})
+
+/**
+ * The sampler is the only thing between a runaway planner child and the replica. If it cannot see the process table, the
+ * limits would silently govern nothing, so this fails first, with a name, before any child starts. Limits that need no
+ * sampler (a heap ceiling, a line cap) have nothing to check.
+ */
+export async function assertPlannerLimitsEnforceable(limits: ManagedDshResourceLimits): Promise<void> {
+  if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return
+  await (limits.governor ?? sharedProcessTreeGovernor()).probe()
+}
+
+/**
  * One planner per tenant, each rooted in that tenant's own directory, so planner sessions and working files never sit
  * beside another tenant's. Planners are created lazily by the dsh adapter (no process starts until a session needs one).
  * The dsh adapter does not report token usage yet, so until it does every invocation is charged the quota policy's
@@ -141,10 +169,39 @@ export function createDshTenantPlannerProvider(
   base: Omit<DshEmbeddedBookingPlannerOptions, 'stateRoot'>,
   createPlanner: (options: DshEmbeddedBookingPlannerOptions) => Promise<DshEmbeddedBookingPlannerHandle> = createDshEmbeddedBookingPlanner,
 ): TenantPlannerProvider {
+  // The real dsh planner of the tenant form never holds the deployment's LLM credential (docs/rfc/aaas-rfc.md §4.8, S-18):
+  // it is built with a broker that gives each planner process tree a ticket. A planner factory injected by a suite is
+  // the caller's own business and is not asked for one.
+  if (createPlanner === createDshEmbeddedBookingPlanner && base.llmTickets === undefined) {
+    throw new Error('tenant_planner_credential_broker_required')
+  }
   const handles: DshEmbeddedBookingPlannerHandle[] = []
+  const realPlanner = createPlanner === createDshEmbeddedBookingPlanner
+  let governable = false
   return {
     async forTenant(context) {
-      const handle = await createPlanner({ ...base, stateRoot: context.tenantRoot })
+      if (realPlanner && !governable) {
+        await assertPlannerLimitsEnforceable(base.resourceLimits ?? DEFAULT_TENANT_PLANNER_RESOURCE_LIMITS)
+        governable = true
+      }
+      // Tickets issued for this tenant report their measured usage to this tenant's meter. The report is bound to the
+      // async context where the ticket is issued, which is inside the planner invocation that needs the port: the broker
+      // answers from its own request context, and the report must still land on the invocation that asked (and on no other).
+      const issuer = base.llmTickets
+      const llmTickets: LlmTicketIssuer | undefined = issuer && {
+        issue: (options: LlmTicketOptions = {}) => issuer.issue({
+          ...options,
+          onUsage: AsyncResource.bind((report: LlmUsageReport) => context.reportUsage(report.model, report.usage)),
+        }),
+      }
+      const handle = await createPlanner({
+        ...base,
+        ...(llmTickets ? { llmTickets } : {}),
+        resourceLimits: base.resourceLimits ?? DEFAULT_TENANT_PLANNER_RESOURCE_LIMITS,
+        // Both come from the tenant, never from the deployment-wide base: a shared label or root would defeat the point.
+        cachePartition: context.cachePartition,
+        stateRoot: context.tenantRoot,
+      })
       handles.push(handle)
       return handle.plannerFactory
     },

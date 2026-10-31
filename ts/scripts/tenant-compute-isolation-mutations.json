@@ -1,0 +1,230 @@
+{
+  "suite": "scripts/tenant-compute-isolation-tests.ts",
+  "timeoutMs": 120000,
+  "mutations": [
+    {
+      "id": "K1",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a reused pid is sampled and killed: the parent check is gone",
+      "find": "if (!root || root.ppid !== target.parentPid) return null",
+      "replace": "if (!root) return null"
+    },
+    {
+      "id": "K2",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "exactly at the memory limit counts as a breach",
+      "find": "sample.rssBytes > limits.maxRssBytes",
+      "replace": "sample.rssBytes >= limits.maxRssBytes"
+    },
+    {
+      "id": "K3",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "the CPU limit is never enforced",
+      "find": "if (limits.maxCpuSeconds !== undefined && sample.cpuSeconds > limits.maxCpuSeconds) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "K4",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "only the root of a breaching tree is killed",
+      "find": "this.kill(sample.pids)",
+      "replace": "this.kill(sample.pids.slice(0, 1))"
+    },
+    {
+      "id": "K5",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "the owner is never told why",
+      "find": "watch.onBreach(breach)",
+      "replace": "void breach"
+    },
+    {
+      "id": "K6",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a breached watch stays registered and fires again",
+      "find": "        this.watches.delete(id)\n        try {\n          watch.onBreach(breach)",
+      "replace": "        try {\n          watch.onBreach(breach)"
+    },
+    {
+      "id": "K7",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "ticks overlap",
+      "find": "if (this.ticking || this.watches.size === 0) return",
+      "replace": "if (this.watches.size === 0) return"
+    },
+    {
+      "id": "K8",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "failed samples are not counted",
+      "find": "        this.sampleFailures += 1\n",
+      "replace": ""
+    },
+    {
+      "id": "K9",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a throwing breach handler stops the kill from being reported as handled",
+      "find": "        } catch (error) {\n          this.report(error)\n        } finally {\n          this.kill(sample.pids)\n        }",
+      "replace": "        } finally {\n          this.kill(sample.pids)\n        }"
+    },
+    {
+      "id": "K10",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a zero limit is accepted",
+      "find": "if (value !== undefined && (!Number.isFinite(value) || value <= 0)) throw new RangeError",
+      "replace": "if (value !== undefined && (!Number.isFinite(value) || value < 0)) throw new RangeError"
+    },
+    {
+      "id": "K11",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a watch with no limit registers anyway",
+      "find": "    if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return () => undefined\n",
+      "replace": ""
+    },
+    {
+      "id": "K12",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "a line that never ends is buffered without a cap",
+      "find": "if (maxLineChars !== undefined && this.inputBuffer.length > maxLineChars) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "K13",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "a ceiling already set in NODE_OPTIONS stays beside the new one",
+      "find": "option !== '' && !option.startsWith('--max-old-space-size=')",
+      "replace": "option !== ''"
+    },
+    {
+      "id": "K14",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "the heap ceiling never reaches the environment of the worker tree",
+      "find": "if (heapMb === undefined) return env",
+      "replace": "return env"
+    },
+    {
+      "id": "K15",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "the tree is never watched",
+      "find": "    if (!limits || (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined)) return\n",
+      "replace": "    return\n"
+    },
+    {
+      "id": "K16",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "closing a port leaves its tree watched",
+      "find": "      this.stopWatching()\n      this.failPending(new Error('managed DSH run port closed'))",
+      "replace": "      this.failPending(new Error('managed DSH run port closed'))"
+    },
+    {
+      "id": "K17",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "a resource kill is reported as an ordinary exit",
+      "find": "this.terminalError ??= new ManagedDshResourceLimitError(breach)",
+      "replace": "this.terminalError ??= new Error('managed DSH worker exited')"
+    },
+    {
+      "id": "K18",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "a worker that died of its own heap ceiling is not recognised",
+      "find": "if (!tail.includes('JavaScript heap out of memory')) return",
+      "replace": "return"
+    },
+    {
+      "id": "K19",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "the heap ceiling is missing from the worker command line",
+      "find": ": [process.execPath, ...heap, path]",
+      "replace": ": [process.execPath, path]"
+    },
+    {
+      "id": "K20",
+      "file": "src/booking-surface/dsh-planner.ts",
+      "note": "a resource kill is thrown instead of answered",
+      "find": "if (error instanceof ManagedDshResourceLimitError) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "K21",
+      "file": "src/booking-surface/dsh-planner.ts",
+      "note": "a resource kill is marked retryable",
+      "find": "metricOutcome = 'resource_limit'\n            console.error('[booking-copilot] planner child exceeded a resource limit:', JSON.stringify(error.breach))\n            retire(runPort)\n            return [{ kind: 'error', error: { code: 'PLANNER_FAILED', message: providerFailureMessage('PLANNER_FAILED'), retryable: false } }]",
+      "replace": "metricOutcome = 'resource_limit'\n            console.error('[booking-copilot] planner child exceeded a resource limit:', JSON.stringify(error.breach))\n            retire(runPort)\n            return [{ kind: 'error', error: { code: 'PLANNER_FAILED', message: providerFailureMessage('PLANNER_FAILED'), retryable: true } }]"
+    },
+    {
+      "id": "K22",
+      "file": "src/booking-surface/dsh-planner.ts",
+      "note": "the real port is built without the planner's limits",
+      "find": "      ...(options.resourceLimits ? { limits: options.resourceLimits } : {}),\n      ...(options.dshBin ? { dshBin: options.dshBin } : {}),\n    })\n  } catch (error) {\n    ticket?.revoke()",
+      "replace": "      ...(options.dshBin ? { dshBin: options.dshBin } : {}),\n    })\n  } catch (error) {\n    ticket?.revoke()"
+    },
+    {
+      "id": "K23",
+      "file": "src/booking-surface/startup.ts",
+      "note": "tenants get no default ceilings",
+      "find": "resourceLimits: base.resourceLimits ?? DEFAULT_TENANT_PLANNER_RESOURCE_LIMITS,",
+      "replace": "resourceLimits: base.resourceLimits,"
+    },
+    {
+      "id": "K24",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a tenant still opening does not hold a slot",
+      "find": "new Set([...this.handles.keys(), ...this.opening.keys()]).size >= cap",
+      "replace": "this.handles.size >= cap"
+    },
+    {
+      "id": "K25",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "the cap admits one tenant too many",
+      "find": "new Set([...this.handles.keys(), ...this.opening.keys()]).size >= cap",
+      "replace": "new Set([...this.handles.keys(), ...this.opening.keys()]).size > cap"
+    },
+    {
+      "id": "K26",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a zero cap is accepted",
+      "find": "options.maxOpenTenants < 1",
+      "replace": "options.maxOpenTenants < 0"
+    },
+    {
+      "id": "K27",
+      "file": "src/booking-surface/startup.ts",
+      "note": "the real tenant planner starts children without checking the sampler can see",
+      "find": "        await assertPlannerLimitsEnforceable(base.resourceLimits ?? DEFAULT_TENANT_PLANNER_RESOURCE_LIMITS)\n",
+      "replace": ""
+    },
+    {
+      "id": "K28",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a process table that does not show this process passes the check",
+      "find": "if (!self || self.rssBytes <= 0) throw new ProcessTableUnavailableError()",
+      "replace": "if (false) throw new ProcessTableUnavailableError()"
+    },
+    {
+      "id": "K29",
+      "file": "src/tenant-seam/process-governor.ts",
+      "note": "a process table that cannot be read passes the check",
+      "find": "    } catch (error) {\n      throw new ProcessTableUnavailableError(error)\n    }",
+      "replace": "    } catch {\n      return\n    }"
+    },
+    {
+      "id": "K31",
+      "file": "src/booking-surface/managed-dsh-run-port.ts",
+      "note": "a worker that never said who it is goes unreported",
+      "find": "RESOURCE_GOVERNOR_UNATTACHED ${JSON.stringify(",
+      "replace": "X_UNATTACHED ${JSON.stringify("
+    },
+    {
+      "id": "K32",
+      "file": "src/booking-surface/tenancy.ts",
+      "note": "a full replica tells the caller to retry soon",
+      "find": "if (error instanceof ReplicaAtCapacityError) return { status: 503, body: { error: { code: 'tenant_unavailable' } } }",
+      "replace": "if (error instanceof ReplicaAtCapacityError) return { status: 503, body: { error: { code: 'tenant_unavailable' } }, retryAfterSeconds: 1 }"
+    },
+    {
+      "id": "K30",
+      "file": "src/booking-surface/startup.ts",
+      "note": "limits that need no sampler are probed anyway",
+      "find": "  if (limits.maxRssBytes === undefined && limits.maxCpuSeconds === undefined) return\n  await (limits.governor",
+      "replace": "  await (limits.governor"
+    }
+  ]
+}

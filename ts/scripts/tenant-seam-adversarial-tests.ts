@@ -882,8 +882,8 @@ try {
       return { plannerFactory: service.planner.factory, async close() { entry.closed = true } }
     })
     const [alice, bob] = [tenantOf(ALICE), tenantOf(BOB)]
-    await provider.forTenant({ tenantRoot: service.router.tenantRootOf(alice.organization, alice.ledgerTenant), reportUsage() {} })
-    await provider.forTenant({ tenantRoot: service.router.tenantRootOf(bob.organization, bob.ledgerTenant), reportUsage() {} })
+    await provider.forTenant({ tenantRoot: service.router.tenantRootOf(alice.organization, alice.ledgerTenant), cachePartition: `pc-${'a'.repeat(32)}`, reportUsage() {} })
+    await provider.forTenant({ tenantRoot: service.router.tenantRootOf(bob.organization, bob.ledgerTenant), cachePartition: `pc-${'b'.repeat(32)}`, reportUsage() {} })
     assert.deepEqual(created.map((entry) => entry.stateRoot), [service.router.tenantRootOf(alice.organization, alice.ledgerTenant), service.router.tenantRootOf(bob.organization, bob.ledgerTenant)])
     assert.notEqual(created[0]!.stateRoot, created[1]!.stateRoot)
     await provider.close()

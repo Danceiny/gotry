@@ -14,7 +14,8 @@
 - Two invariants carry most of the weight: the tenant is derived only at the trusted seam, and every durable write is fenced by epoch.
 - Today's per-node form is protected mainly by the loopback boundary (C2, C16) and ADR-23 request bindings. AaaS removes the loopback premise, so A2 and A3 must replace it.
 - Supplier login state stays out of the cloud. AaaS adds no server-side session store.
-- Denial of service is mostly about cost: LLM budget, planner workers, bridge long polls, and the organization's shared supplier login.
+- Denial of service is mostly about cost: LLM budget, planner workers, bridge long polls, and the organization's shared supplier login. It is also about the replica itself: one runaway planner child must not take the CPU, memory or file descriptors of every tenant on it (S-17).
+- Execution isolation is narrow in v1, because the planner can run no code. What the tenants of a replica still share (CPU, memory, descriptors, the LLM credential, the provider's prompt cache, the executor's host browser) has one control each, S-16 to S-19. The entry criteria for what is not built are in RFC §4.8.
 
 ## 1. Scope and assets
 
@@ -58,6 +59,10 @@ The trust boundaries are: browser to BFF (hotel-be is the authority); BFF to the
 | S-13 | Prompt-injected content triggers cross-tenant reads or write actions | Observations are data; writes are sealed | Tools carry no tenant parameter; WriteGate unchanged | A2: injected instructions that name another tenant produce no cross-tenant read **Mitigated in A2** (§94 E1, with a positive control). |
 | S-14 | A captured BFF request is replayed | Request keys are idempotent | Request keys scoped by tenant; assertion expiry | A2: a replay returns the original result and creates no new effect **Mitigated in A2** (§94 D3 and D4); assertion expiry is A3 (S-8). |
 | S-15 | A mixed-version fleet enables a feature some replicas lack | Feature intersection rule (ADR-23) | Ownership moves only between compatible replicas | A3: a rolling-deploy drill keeps optional features off until every replica advertises them |
+| S-16 | A provider's prompt cache lets one tenant infer whether another tenant's content was sent: both prompts share a cached prefix, and timing or the bill shows the hit | Every tenant's prompt shares one prefix up to the payload, and nothing fixes where tenant content begins | A per-tenant HMAC label (`pc-…`, under the organization key and its own context string) sits after the instructions every tenant shares and before any tenant-controlled or tenant-derived byte; a malformed label is refused; the shared form is byte-identical | A2: two tenants sending identical content share a prefix that ends inside the label and holds no payload byte, whatever is sent; the same tenant keeps its own prefix **Mitigated in A2** (run-all §98). Assumes the provider caches by prompt prefix; the operator's own bill is unchanged. |
+| S-17 | One tenant's planner child exhausts the CPU, memory or file descriptors of a replica and takes every tenant on it down | Wall-clock turn deadlines, process-group cleanup and a global turn cap; nothing bounds a child's memory or CPU, or how many tenants a replica holds open | Each planner process tree runs under a V8 heap cap, a sampled tree RSS and CPU cap and a cap on an unterminated line; a tree over a ceiling is killed and its turn ends as a non-retryable `PLANNER_FAILED`, never rerun; `maxOpenTenants` refuses a tenant over the cap before its lease or any file exists | A2: a worker that leaks off-heap memory, leaks in a grandchild, spins, exhausts its heap or writes a line that never ends is stopped, typed and reaped while a neighbour keeps answering **Mitigated in A2** (run-all §96). The sampler reads `ps` once a second; the defaults are unreviewed; there is no uid, cgroup or egress separation; a heap death in the runtime below the worker is not typed (the answer is the same, only the metric differs); where the process table cannot be read the real tenant planner refuses to start a child. |
+| S-18 | The deployment's LLM credential is read from a process that model output steers and is used elsewhere or for longer | The credential sits in the planner child's environment, valid from anywhere until rotated | A loopback broker holds the key and base URL; each planner process tree gets a ticket that works only against the broker, for a bounded number of requests and a bounded time, and dies with its port; the real planner of the tenant form cannot be built without a broker; a ticket's measured usage is charged to its own tenant | A2: the child is given the ticket in place of the key and base URL, and the ambient `LLM_API_KEY` and `LLM_BASE_URL` are removed, checked against a real worker with an uncorrected control that does leak; a real dsh run through the broker yields its decision; the upstream sees the real key only from the broker; a ticket for another broker, a revoked, an expired or an exhausted one reaches nothing **Mitigated in A2** (run-all §97). Narrows a compromised child, not a compromised gotry process; carries the chat-completions route only. |
+| S-19 | A second organization's caller rides the executor's host browser and, with it, the first organization's supplier login | The executor module has one deployment key and drives one host Chrome | The module knows whose login the host browser holds and serves only that organization; the caller's organization is resolved by the host and never read from the request; a deployment that serves several organizations must name the owner; an injected observer is told the caller's organization | A2: a foreign organization is refused before the browser is touched; a body, header or query that names another organization changes nothing **Mitigated in A2** (run-all §99) for the host-browser executor. A multi-tenant cloud browser is not built (RFC §4.8 entry criteria). |
 
 ## 4. Security invariants
 
@@ -68,6 +73,10 @@ The trust boundaries are: browser to BFF (hotel-be is the authority); BFF to the
 5. No supplier credential value exists on the server.
 6. Forget removes a tenant from every copy, including off-node ones.
 7. The gotry tier is never browser-reachable (C16).
+8. Every planner process tree runs under resource ceilings; a tree over a ceiling is killed and its turn fails without a retry.
+9. In the tenant form no planner process holds the upstream LLM credential; it holds a ticket that dies with its port.
+10. Every tenant's planner prompt carries that tenant's cache partition label ahead of any tenant-derived byte.
+11. The executor's host browser serves only the organization whose supplier login it holds.
 
 ## 5. Rejected options
 
@@ -78,7 +87,11 @@ The trust boundaries are: browser to BFF (hotel-be is the authority); BFF to the
 | Rely on a Redis or database lock without fencing | A lost or duplicated lock would let two writers commit |
 | Store supplier cookies on the server to share logins | It violates the 2026-09-11 decision and turns the service into a login farm |
 | Design host- and storage-level access control now: file permissions, encryption at rest, operator audit | Access control lives at the presentation layer, where every read and write already resolves one tenant at the seam; ops-level redundancy waits for a real need (founder, 2026-10-26) |
+| A microVM or gVisor sandbox per planner task in v1 | The v1 planner can run no code or command (plugins disabled, `toolBash` off), so a sandbox would isolate nothing it can reach. It becomes the baseline for the hosted conversational agent (Q6) and for any multi-tenant cloud browser; RFC §4.8 lists the entry criteria |
+| Per-tenant provider API keys in place of a broker and a cache label | It needs the provider to offer it and gives a control that cannot be tested offline; the broker and the label are tested at our own boundary. Either can be added later without removing them |
 
 ## 6. Open questions
 
 - Which signed-assertion format the BFF can issue (A3 boundary ADR).
+- Whether the model provider isolates prompt caches per API key or workspace. That would make the cache label redundant, not harmful.
+- The production values of the planner ceilings, `maxOpenTenants` and the global turn cap, after probes of the real nodes ([capacity baseline](../ops/aaas-capacity-baseline.md)).
