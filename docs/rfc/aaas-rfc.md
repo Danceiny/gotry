@@ -187,7 +187,7 @@ The lease store is decision Q3. Candidates are hotel-be's MySQL (one row per ten
 | In-flight turn lost | Client timeout | Retry | The same request key replays | No duplicate effect (ADR-23 binding) |
 | Bridge owner crashes | Lease expiry | Queued jobs wait; claimed jobs settle `unresolved` | New bridge owner (`recoverOnBoot` semantics) | No cross-organization claim |
 | Mixed-version fleet | Feature advertisement | Optional features turn off | — | ADR-23 intersection rule |
-| Two replicas share one file by misconfiguration | Epoch guard in `kv` | The second writer aborts | Fix the configuration | Single writer |
+| Two replicas share one file by misconfiguration | The lease epoch: a restore replaces the file by atomic rename, so the older writer holds an unlinked file (a guard in `kv` checked on every write would change the kernel) | The older writer is fenced at its next renewal | Fix the configuration | Single writer |
 
 ### 4.7 Leaving the per-node islands
 

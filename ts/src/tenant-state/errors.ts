@@ -85,3 +85,17 @@ export class CopyConflictError extends TenantStateError {
     super('GOTRY_TENANT_COPY_CONFLICT', message)
   }
 }
+
+/** The tenant is being handed off: in-flight work finishes, new work is refused and should be retried on the next owner. */
+export class TenantDrainingError extends TenantStateError {
+  constructor(key: string) {
+    super('GOTRY_TENANT_DRAINING', `tenant ${key} is being handed off`)
+  }
+}
+
+/** The router was closed; no tenant can be opened through it any more. */
+export class RouterClosedError extends TenantStateError {
+  constructor() {
+    super('GOTRY_TENANT_ROUTER_CLOSED', 'the tenant router is closed')
+  }
+}

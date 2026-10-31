@@ -2,6 +2,8 @@
  * Shared fixtures of the tenant-state suites (AaaS A1): fake clocks for the offline, deterministic runs.
  */
 
+import type { DurableStore } from '../src/tenant-state/durable-store.ts'
+import { DurableStoreUnavailableError } from '../src/tenant-state/errors.ts'
 import type { MonotonicClock } from '../src/tenant-state/tenant-lease.ts'
 
 export class ManualClock implements MonotonicClock {
@@ -39,5 +41,49 @@ export class TrippingClock extends ManualClock {
       this.readsUntilJump -= 1
     }
     return super.nowMs()
+  }
+}
+
+/** A durable store with an outage switch and one-shot failures, to cut the network at chosen moments. */
+export class FaultyDurableStore implements DurableStore {
+  down = false
+  failNextPut: RegExp | null = null
+  conflictNextPut: RegExp | null = null
+  private readonly inner: DurableStore
+
+  constructor(inner: DurableStore) {
+    this.inner = inner
+  }
+
+  private gate(): void {
+    if (this.down) throw new DurableStoreUnavailableError('injected outage')
+  }
+
+  async putIfAbsent(key: string, bytes: Uint8Array): Promise<boolean> {
+    this.gate()
+    if (this.failNextPut?.test(key)) {
+      this.failNextPut = null
+      throw new DurableStoreUnavailableError(`injected failure for ${key}`)
+    }
+    if (this.conflictNextPut?.test(key)) {
+      this.conflictNextPut = null
+      return false
+    }
+    return this.inner.putIfAbsent(key, bytes)
+  }
+
+  async get(key: string): Promise<Uint8Array | null> {
+    this.gate()
+    return this.inner.get(key)
+  }
+
+  async list(prefix: string): Promise<string[]> {
+    this.gate()
+    return this.inner.list(prefix)
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    this.gate()
+    return this.inner.deletePrefix(prefix)
   }
 }
