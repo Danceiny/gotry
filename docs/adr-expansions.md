@@ -16,6 +16,7 @@
 - **Attribution discipline**: attribution can only be recorded at confirm-outcome, explicitly stated by the user; **the model is not allowed to self-rate "useful"**.
 - Wish stable `wish_id` + muted (dormant, not deleted); recall 0..1/turn (`gotry_wish_pool_list` condition scoring; muted never recalled; no hit, no hard push) — the measurement base of the M4 north star "next-departure rate".
 - Alternatives and trade-offs: recording "useful" on recall — self-claimed usage ≠ improving outcomes; wish deletion — aspirations should not be rejected.
+- **AaaS re-review (2026-10-28, #674): holds per tenant.** Attribution still needs the tenant's own confirmation. No cross-tenant utility aggregation; a second consumer still re-opens this ADR.
 
 #### 8.15 Transactional state foundation
 Single-file SQLite ledger (better-sqlite3, WAL) = sole authority, converging the industry's durable-execution five-piece set:
@@ -29,17 +30,22 @@ Old JSON/JSONL degrade to one-way export views (red line 6); one-shot migration 
 
 Alternatives and trade-offs: Postgres/DBOS/Temporal/Restate platforms — a single-user local product needs no server side (the SQLite durable school, "one file is the control plane"); pure file hardening tmp+rename — cannot fix cross-file forks and concurrency; `node:sqlite` — zero-dependency but newer, the D1 runner-up.
 
+**AaaS re-review (2026-10-28, #674): holds as keyed single writer.** One ledger per tenant is that tenant's sole authority, with at most one writer at any instant, fenced by an epoch, and off-node durability under a declared RPO: asynchronous copies while writes stay sealed, and RPO 0 before M5 unseals on AaaS. Leases, routing and replication live outside the kernel; an epoch guard inside `state-ledger.ts` needs explicit founder approval. cr-sqlite is rejected for service state. Contract and falsification plan: [AaaS RFC](rfc/aaas-rfc.md) §3–§5.
+
 #### 8.16 Dual-form architecture freeze
 - **One ledger semantics, two host bindings**: local = better-sqlite3 reading the file directly; Web = the same schema on a per-user SQLite file (or Postgres, isomorphic schema).
 - **`tenant_id` is first-class from day one**: events/projections/work orders/pending_writes all carry the tenant column, constant `'local'` in the single-user phase, primary keys namespaced against cross-user collisions.
 - **Execution boundary (issue #224 fix)**: `insertEvent` must write the current ledger tenant; `readEvents(kind?)`, projection fold, and `rebuildProjections(toSeq?)` must carry the tenant condition; the `wish.updated` fold looks up existing items of the current tenant — cross-tenant same `wish_id` never cross-reads. legacy JSON/JSONL and v1 DBs migrate only into `local`; non-local events already miswritten as `local` by the old bug lack an auditable owner, cannot be guessed back by schema migration, and can only go through a manual data-repair issue/PR with external evidence.
 - **Sync = replication of ledger events, not translation of state**: event rows carry `tenant_id` + idempotency keys, dual-end merge naturally idempotent. Writes must go through the ledger; reads must carry tenant context into the invariant tables.
 - Alternatives and trade-offs: local and Web each growing their own logic — the multi-user-phase merge could only be rebuilt from scratch; cloud-authoritative + local cache — violates red line 6 local-first; syncing projections instead of events — projections are derived state, merging would fork.
+- **AaaS (2026-10-28, #674): the freeze holds and the deferred items activate.** The per-user SQLite file becomes the server binding, sync stays event replication, and the claim/CAS implementation is A1 ([AaaS RFC](rfc/aaas-rfc.md) §4.2).
 
 #### 8.17 Booking saga state-machine naming
 The booking/payment/refund saga **introduces no orchestration framework (LangGraph etc.)**; the FSM lands as the vocabulary layer of the ledger's `pending_writes` (`ts/src/booking-saga.ts`, `booking_saga_fsm.v1` pure functions): the state alphabet matches the CHECK constraint verbatim, edges fully functionalized.
 
 Alternatives and trade-offs: LangGraph/Temporal-style frameworks — a second runtime, violating the harness baseline and the reuse matrix; states scattered across SQL strings — edge semantics drift with no vocabulary; multi-agent prompt coordination — implicit dependencies.
+
+**AaaS re-review (2026-10-28, #674): holds.** A keyed single writer serializes a tenant's saga, so no parallel writer is admitted. On AaaS the saga state lives in the tenant ledger, and RPO 0 (durability mode D-b) is a precondition before M5 unseals ([AaaS RFC](rfc/aaas-rfc.md) §4.3).
 
 #### 8.18 Effect interpreter `effect_interpreter.v1`
 "Effect description + interpreter" sinks to the L4 channel boundary — the tool/orchestration layer only produces pure-data effect values `{effect, params}`; channel access, backoff-retry, circuit breaker, and compile-time mocks all converge into the interpretation layer.
@@ -81,6 +87,8 @@ Booking Copilot is a BFF-only embedded read-action surface inside the existing w
 - **same-revision replay guard (ordinary TURN branch)**: applied AFTER the confirmed-availability `confirmed_workspace_drift` rejection so the historical specific diagnostic stays stable; `BookingCopilotTaskRuntime.resumeTask` then compares the durable workspace semantic digest (contextRef/revision stripped) of every ordinary `booking.copilot.user.turn.observed` row against the prior state at the same revision; a silent drift fails closed as `ledger_corrupt:<task>:same_revision_turn_workspace_drift` instead of letting a row written by an old public `startTask` (no live-time CAS) smuggle a verifiedOffer/loadedOffer/selection drift into replay and turn the replayed workspace into checkout authority. The explicit `replayUpgradeRequired` reanchor and the confirmed-availability `confirmed_workspace_drift` rejection stay intact; the live-time `startTask` guard (`workspace_mismatch` at same revision without an active reanchor) remains the primary defense.
 
 Explicitly rejected alternatives: a standalone chat booking page; replacing v1 with a breaking v2; free-text/JSON execution; treating server outbox intent as already displayed; exposing `Book` on the embedded surface. Current capability excludes portal tokens, PII, or supplier-cost egress; off-page automatic write/payment is deferred to the M5 WriteGate proposal (`design/write-gate-production-design.md`); multi-writer or cross-host triggers ADR-15/16 re-review.
+
+**AaaS re-review (2026-10-28, #674): holds.** Continuity across hosts comes from tenant routing, not shared state. Additions on acceptance: the tenant is derived in the trusted seam, `requestKey` and `taskHandle` are tenant-scoped, and per-organization credentials replace the shared bearer key once the service leaves loopback (A2, A3).
 
 #### 8.24 ADR-24: turn budget = routing + wall-clock dual exits (turn-policy / turn-deadline)
 

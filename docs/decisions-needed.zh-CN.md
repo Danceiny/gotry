@@ -8,14 +8,9 @@
 > 下游：按回执推进的实现/Exit 证据与 issue gate 更新；founder YES 只满足对应决策门，不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回；按回执推进。
 
-**速览：1 项在追——#674 AaaS A0 RFC 评审（七个决策，各附建议：[`rfc/aaas-rfc.md`](rfc/aaas-rfc.zh-CN.md) §8.1）；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
+**速览：无在追事项；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
 
 ## 未决
-
-### #674 AaaS A0 RFC 评审（在追）
-
-**待决（founder）**：接受或修改 AaaS RFC。它提出 Q1–Q7 共七个问题，每个都附建议；回复「按建议」即全部接受。接受之后才开工 A1，在此之前运行时没有任何变化。只读事实项 F-1–F-4 并行查明，不等待决策。
-**位置**：[`rfc/aaas-rfc.md`](rfc/aaas-rfc.zh-CN.md) §8；威胁模型 [`design/aaas-security-design.md`](design/aaas-security-design.zh-CN.md)；issue #674。
 
 ### #137 P6 founder review（整体方案批准）
 
@@ -39,6 +34,7 @@
 
 | # | 事项 | 决策 | 结算 |
 |---|---|---|---|
+| #674 | AaaS A0 RFC（七个决策） | **按建议接受**：按租户 keyed 单写者（ADR-15 重新表述）；账本 owner 为个人；租约存储为 hotel-be MySQL、每租户一行；持久性 A3 之前用 D-a、AaaS 上启封 M5 之前须 D-b；专用内网层并新增边界 ADR；v1 范围为 `gotry-backend` 服务面；各节点现有的 `local` 账本只读归档、不迁移 | ✅ 2026-10-28（founder 合并 [#675](https://github.com/Danceiny/gotry/pull/675) 并指示 A1 开工） |
 | D-9 | dsh-calendar 分发面 | **默认不挂载**；挂载与否进 setup 状态面（`~/.gotry/calendar.json`，`npx @danceiny/gotry setup calendar` on/off），禁止环境变量控制产品行为（founder 2026-09-03 纠偏）；doctor 增宿主插件节 | ✅ 2026-09-03（ADR-25，run-all §50） |
 | D-8 | 工具编排策略 | **静态平铺 + 健康态驱动的动态建议**：工具面平铺不变、解译器不做隐藏派发；通道健康面 + verdict≠hit 时结果内注入 `routing` 顺位表（可用性>证据级>效率）；persona （19） 收缩为注册表生成片段 | ✅ 2026-09-03（同上） |
 | D-7 | 有额度工具的配额归属 | **分层归属**：匿名 trial 池=首次体验导流层，正式使用升级 user-key/user-session；产品统一 key 池暂缓，M3 真实 cohort 规模出现时复审；doctor 增配额探测 | ✅ 2026-09-03（同上） |
