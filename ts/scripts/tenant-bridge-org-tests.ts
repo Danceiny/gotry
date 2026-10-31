@@ -42,6 +42,7 @@ import {
 import { BridgeLedgerStore, bridgeLedgerDbPath, openBridgeLedgerStore, type BridgeJobRow } from '../capabilities/session/bridge-ledger.ts'
 import { closeBackend, createBackendServer, type BackendServerHandle } from '../src/backend/kernel.ts'
 import { startSessionSearchModule, type SessionAdmissionDecision } from '../src/backend/modules/session-search.ts'
+import { __resetRateLimiterForTest } from '../capabilities/session-search.ts'
 import { InvalidTenantIdError } from '../src/tenant-state/errors.ts'
 
 const ACME = 'acme'
@@ -453,6 +454,33 @@ async function main(): Promise<void> {
   })
 
   /* ---------- Q: queue ---------- */
+
+  await check('L6 an older binary recreates the single-column idempotency index; the next open of the new code drops it again, so one organization\'s key never blocks another\'s', async () => {
+    const root = tmpRoot('l6')
+    openBridgeLedgerStore(root).close()
+    const dbPath = bridgeLedgerDbPath(root)
+    const raw = new Database(dbPath)
+    // what the older schema does at every open of the file
+    raw.exec('CREATE UNIQUE INDEX IF NOT EXISTS bridge_events_idem_key ON bridge_events(idem_key) WHERE idem_key IS NOT NULL')
+    raw.close()
+    const store = openBridgeLedgerStore(root)
+    try {
+      const check = new Database(dbPath, { readonly: true })
+      try {
+        const names = (check.prepare("SELECT name FROM sqlite_master WHERE type='index'").all() as Array<{ name: string }>).map((row) => row.name)
+        assert.ok(!names.includes('bridge_events_idem_key'), `the old single-column index is gone: ${names.join(',')}`)
+        assert.ok(names.includes('bridge_events_org_idem_key'))
+      } finally {
+        check.close()
+      }
+      const event = { client_id: randomUUID(), kind: 'workspace', site: null, subject: 's', payload_json: '{}', idem_key: 'shared-key' }
+      assert.equal(store.insertEvent(ACME, event), true)
+      assert.equal(store.insertEvent(RIVAL, event), true, 'the same key in another organization is its own event')
+      assert.equal(store.insertEvent(ACME, event), false, 'and still deduplicates inside one')
+    } finally {
+      store.close()
+    }
+  })
 
   await check('Q1 a queued job is never handed to a poller of another organization, even with the same site, origin and client id', async () => {
     const f = await fixture('q1')
@@ -1148,6 +1176,84 @@ async function main(): Promise<void> {
     } finally {
       await h.done()
     }
+  })
+
+  await check('M7 the in-process pacing gate of the real search is per organization: two organizations back to back are both served, one organization twice is paced', async () => {
+    __resetRateLimiterForTest()
+    const mod = startSessionSearchModule({
+      apiKey: () => KEY,
+      stateRoot: tmpRoot('m7'),
+      verdictLog: () => undefined,
+      callerOrganization: (req: IncomingMessage) => { const value = req.headers[ORG_HEADER]; return typeof value === 'string' ? value : null },
+    })
+    const handle: BackendServerHandle = await createBackendServer({ modules: [mod], port: 0 })
+    const base = `http://127.0.0.1:${handle.port}`
+    try {
+      // the real search asks the organization's extension for login tickets; an extension with none ends it at once
+      const search = async (organization: string): Promise<{ status: number; body: { verdict?: string; error?: string } }> => {
+        const client = randomUUID()
+        const request = fetch(`${base}/v1/session/search`, { method: 'POST', headers: authed(organization), body: JSON.stringify({ supplier: SITE }) })
+        const polled = await fetch(`${base}/v1/session/bridge/jobs`, { method: 'POST', headers: authed(organization, {}, EXTENSION_ORIGIN), body: JSON.stringify({ clientId: client, capabilities: [SITE] }) }).then((r) => r.json()) as { job: ExtensionJob | null }
+        assert.ok(polled.job, `${organization}'s extension was handed its job`)
+        await fetch(`${base}/v1/session/bridge/results?jobId=${polled.job.jobId}`, { method: 'POST', headers: authed(organization, { 'x-gotry-client-id': client }, EXTENSION_ORIGIN), body: JSON.stringify({ ok: true, kind: 'cookie-names', names: [] }) })
+        const response = await request
+        return { status: response.status, body: await response.json() as { verdict?: string; error?: string } }
+      }
+      const a1 = await search(ACME)
+      assert.deepEqual([a1.status, a1.body.verdict], [200, 'needs-login'], 'acme was served')
+      const r1 = await search(RIVAL)
+      assert.deepEqual([r1.status, r1.body.verdict], [200, 'needs-login'], `rival is not paced by acme's call (${r1.body.error ?? ''})`)
+      const a2 = await fetch(`${base}/v1/session/search`, { method: 'POST', headers: authed(ACME), body: JSON.stringify({ supplier: SITE }) })
+      assert.equal(a2.status, 429, 'acme twice in a row is still paced')
+      assert.match(String(((await a2.json()) as { error?: string }).error), /last call \d+ms ago/)
+    } finally {
+      await closeBackend(handle, [mod])
+      __resetRateLimiterForTest()
+    }
+  })
+
+  await check('M8 an admission that returns something that is not a decision is a 503, like a throw: it never crashes the process and never lets the request through', async () => {
+    const h = await harness('m8', { admission: true })
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      for (const malformed of [undefined, null, 'yes', 42, {}, { ok: 'true' }, { ok: 1 }]) {
+        h.decide = () => malformed as unknown as SessionAdmissionDecision
+        const before = h.searches.length
+        // bounded: a handler that crashes would never answer, and that must read as a failed assertion, not a hang
+        const response = await fetch(`${h.base}/v1/session/search`, { method: 'POST', headers: authed(ACME), body: JSON.stringify({ supplier: SITE }), signal: AbortSignal.timeout(3_000) })
+        assert.equal(response.status, 503, `a decision of ${JSON.stringify(malformed)}`)
+        assert.deepEqual(await response.json(), { ok: false, error: 'admission-unavailable' })
+        assert.equal(h.searches.length, before, 'the search never ran')
+      }
+      // a refusal without a usable code still refuses, with a fixed one
+      h.decide = () => ({ ok: false, retryAfterSeconds: 3 } as unknown as SessionAdmissionDecision)
+      const refused = await postSearch(h, ACME)
+      assert.equal(refused.status, 429)
+      assert.deepEqual(await refused.json(), { ok: false, verdict: 'quota_exceeded', error: 'quota_exceeded' })
+      assert.equal(jobRows(h.root).length, 0, 'none of it reached the bridge')
+      await sleep(50)
+      assert.deepEqual(rejections, [], 'no rejection escaped')
+    } finally {
+      process.off('unhandledRejection', onRejection)
+      await h.done()
+    }
+  })
+
+  await check('M9 the organization-scoped module refuses the cdp transport at construction (it would drive the host\'s own Chrome for any organization); the single lane keeps it', async () => {
+    const previous = process.env.GOTRY_SESSION_TRANSPORT
+    process.env.GOTRY_SESSION_TRANSPORT = 'cdp'
+    try {
+      assert.throws(() => startSessionSearchModule({ apiKey: () => KEY, callerOrganization: () => ACME }), /session_search_organization_requires_extension_transport/)
+      const single = startSessionSearchModule({ apiKey: () => KEY })
+      await single.close?.()
+    } finally {
+      if (previous === undefined) delete process.env.GOTRY_SESSION_TRANSPORT
+      else process.env.GOTRY_SESSION_TRANSPORT = previous
+    }
+    const extension = startSessionSearchModule({ apiKey: () => KEY, callerOrganization: () => ACME })
+    await extension.close?.()
   })
 
   /* ---------- S: schema scan ---------- */
