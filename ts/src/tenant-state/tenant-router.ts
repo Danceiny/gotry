@@ -141,7 +141,7 @@ function guardedLedger(ledger: StateLedger, assertHeld: Gate): StateLedger {
       if (property === 'db' && descriptor && 'value' in descriptor) return { ...descriptor, value: guardedDatabase(descriptor.value as Database.Database, assertHeld) }
       return descriptor
     },
-    set: () => false,
+    // An assignment to a property that exists ends in defineProperty, so refusing that and delete is what makes the view read-only.
     defineProperty: () => false,
     deleteProperty: () => false,
   })

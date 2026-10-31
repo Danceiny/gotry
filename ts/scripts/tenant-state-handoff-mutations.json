@@ -159,7 +159,7 @@
     {
       "id": "J23",
       "file": "src/tenant-state/tenant-router.ts",
-      "note": "a call on a handle that is closed but still holds the lease reaches a closed database",
+      "note": "a handle that is not serving still accepts new work",
       "find": "    if (this.state === 'closed') this.deps.lease.assertHeld()\n    throw new TenantDrainingError(this.deps.key)\n  }",
       "replace": "    if (this.state === 'closed') this.deps.lease.assertHeld()\n  }"
     },
@@ -194,8 +194,8 @@
     {
       "id": "J28",
       "file": "src/tenant-state/tenant-router.ts",
-      "note": "the view can be rewritten by a consumer",
-      "find": "    set: () => false,\n",
+      "note": "the view can be assigned to by a consumer",
+      "find": "    defineProperty: () => false,\n",
       "replace": ""
     },
     {
@@ -232,6 +232,20 @@
       "note": "a delete by a prefix that stops inside a name takes the neighbours too",
       "find": "    assertDurableDeletePrefix(prefix)\n    const keys = await this.list(prefix)",
       "replace": "    const keys = await this.list(prefix)"
+    },
+    {
+      "id": "J34",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "a call on a handle that is closed but still holds the lease (an abandon is under way) is let through to a closed database",
+      "find": "    if (this.state === 'closed') this.deps.lease.assertHeld()\n    throw new TenantDrainingError(this.deps.key)\n  }",
+      "replace": "    if (this.state === 'closed') { this.deps.lease.assertHeld(); return }\n    throw new TenantDrainingError(this.deps.key)\n  }"
+    },
+    {
+      "id": "J35",
+      "file": "src/tenant-state/tenant-router.ts",
+      "note": "something can be deleted from the view by a consumer",
+      "find": "    deleteProperty: () => false,\n",
+      "replace": ""
     }
   ]
 }

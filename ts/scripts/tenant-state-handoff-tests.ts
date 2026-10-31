@@ -27,7 +27,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -111,11 +111,12 @@ function makeFleet(name: string, options: {
   return {
     durable,
     leases,
-    replica(id: string, onEvent?: (event: RouterEvent) => void): Replica {
+    /** `node` names the state root; two replicas given the same one share it, as a misconfiguration would make them. */
+    replica(id: string, onEvent?: (event: RouterEvent) => void, node: string = id): Replica {
       const clock = new ManualClock(5_000)
       clocks.push(clock)
       const events: RouterEvent[] = []
-      const stateRoot = join(dir, 'nodes', id)
+      const stateRoot = join(dir, 'nodes', node)
       const router = new TenantRouter({
         stateRoot,
         replicaId: id,
@@ -330,7 +331,8 @@ try {
     for (const [name, db] of [['getOwnPropertyDescriptor', viaOne], ['getOwnPropertyDescriptors', viaAll]] as const) {
       assert.throws(() => db.prepare('SELECT 1'), (error: unknown) => error instanceof FencedError, `${name} hands out the guarded database, which refuses once the lease is gone`)
     }
-    assert.throws(() => { (handle.ledger as unknown as { db: unknown }).db = null }, TypeError, 'the view is read-only')
+    assert.throws(() => { (handle.ledger as unknown as { db: unknown }).db = null }, TypeError, 'the view cannot be assigned to')
+    assert.throws(() => { delete (handle.ledger as unknown as { db?: unknown }).db }, TypeError, 'and nothing can be deleted from it')
   })
 
   // ---- F: forget ----------------------------------------------------------------------------------------
@@ -419,6 +421,7 @@ try {
     try {
       await sleep(30)
       assert.throws(() => insert(handle, 'late-1'), isDraining)
+      assert.throws(() => handle.run(() => 1), isDraining, 'a callback that never touches the ledger is refused too: the handle, not only the view, says no')
       assert.throws(() => insertThroughView(handle, 'late-2'), isDraining)
       assert.throws(() => handle.ledger.db.prepare('SELECT 1'), isDraining)
     } finally {
@@ -498,6 +501,22 @@ try {
     assert.equal(existsSync(own), false, 'the tenant\'s own root is the one that goes')
   })
 
+  await check('P3 two replicas that share one state root by misconfiguration: the successor\'s restore puts a new file in place, so the older writer holds an unlinked one, and is fenced', async () => {
+    const fleet = makeFleet('p3')
+    const a = fleet.replica('replica-a', undefined, 'shared-root')
+    const b = fleet.replica('replica-b', undefined, 'shared-root')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    await handle.snapshot()
+    const file = ledgerDbPath(tenantRootFor(a.stateRoot, ORG, TENANT))
+    const before = statSync(file).ino
+    fleet.advance(TTL + 1)
+    const next = await b.router.openTenant(ORG, TENANT)
+    assert.notEqual(statSync(file).ino, before, 'the restore replaced the file: what the older writer has open is no longer the one on the path')
+    assert.throws(() => insert(handle, 'zombie'), (error: unknown) => error instanceof FencedError)
+    assert.deepEqual(keysOf(next), ['k-1'], 'and the successor\'s ledger is the durable copy')
+  })
+
   await check('P2 deleting by prefix takes whole segments only, so a name that is the start of another one cannot take its neighbour', async () => {
     const store = new DirDurableStore(join(root, 'p2'))
     await store.putIfAbsent('acme/t1/e00000001/base.json', Buffer.from('1'))
@@ -568,6 +587,45 @@ try {
       assert.ok(!a.events.some(event => event.type === 'released' && event.flushed), 'and nothing claims a flush')
     })
   }
+
+  await check('D4 while a handoff drains, new calls through the handle are refused with the draining error, and the work that was running finishes and is flushed', async () => {
+    const fleet = makeFleet('d4')
+    const a = fleet.replica('replica-a')
+    const b = fleet.replica('replica-b')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    let finish!: () => void
+    const hold = new Promise<void>((resolve) => { finish = resolve })
+    const running = handle.runAsync(async (ledger) => {
+      await hold
+      assert.notEqual(ledger.insertEvent({ actor: 'test', kind: 'tenant-state.test', payload: {}, idemKey: 'k-2' }), null)
+    })
+    const handingOff = settle(handle.handoff())
+    try {
+      await sleep(30)
+      assert.throws(() => handle.run(() => 1), isDraining, 'run() is refused, whatever the callback does')
+      await assert.rejects(handle.runAsync(async () => undefined), isDraining)
+      assert.equal(handle.isOpen(), false)
+    } finally {
+      finish()
+    }
+    await running
+    const outcome = await within(handingOff, 3_000, 'the handoff')
+    assert.equal(outcome.ok, true, `the handoff finished once the work did, got ${outcome.ok ? '' : String(outcome.error)}`)
+    const next = await b.router.openTenant(ORG, TENANT)
+    assert.deepEqual(keysOf(next), ['k-1', 'k-2'], 'and the work that was running is in the final image')
+  })
+
+  await check('D5 a call on a tenant whose abandon is under way is refused with the draining error, not let through to a closed database', async () => {
+    const fleet = makeFleet('d5')
+    const a = fleet.replica('replica-a')
+    const handle = await a.router.openTenant(ORG, TENANT)
+    insert(handle, 'k-1')
+    const abandoning = handle.abandon()
+    assert.throws(() => handle.run(() => 1), isDraining)
+    await abandoning
+    assert.throws(() => handle.run(() => 1), (error: unknown) => error instanceof FencedError, 'and once the lease is handed back it is the lease that says no')
+  })
 
   // ---- R: the renewal chain ------------------------------------------------------------------------------
   console.log('-- R renewal')
