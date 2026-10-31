@@ -19,6 +19,7 @@ import type Database from 'better-sqlite3'
 import type { StateLedger } from '../state-ledger.ts'
 import type { DurableStore } from './durable-store.ts'
 import {
+  discardLocalLedger,
   forgetTenant,
   publishSnapshot,
   restoreTenantLedger,
@@ -97,19 +98,23 @@ function guardedTransaction(transaction: Callable, assertHeld: Gate): Callable {
 
 /** The database of a ledger: every method proves the lease first, and statements and transactions come back guarded. */
 function guardedDatabase(db: Database.Database, assertHeld: Gate): Database.Database {
-  return new Proxy(db, {
+  const guarded: Database.Database = new Proxy(db, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target)
       if (typeof value !== 'function') return value
       return (...args: unknown[]) => {
         assertHeld()
         const result = Reflect.apply(value as Callable, target, args)
+        // `exec`, `defaultSafeIntegers`, `function`, `loadExtension` and the like return the database itself; what a
+        // caller chains onto it has to stay behind the gate.
+        if (result === target) return guarded
         if (property === 'prepare') return guardedStatement(result as Database.Statement, assertHeld)
         if (property === 'transaction') return guardedTransaction(result as Callable, assertHeld)
         return result
       }
     },
   })
+  return guarded
 }
 
 /** The ledger as a handle exposes it. The router owns its lifecycle, so `close` does nothing here. */
@@ -214,7 +219,9 @@ class OpenTenant implements TenantHandle {
   readonly ledger: StateLedger
   private readonly raw: StateLedger
   private readonly deps: HandleDeps
-  private state: 'serving' | 'draining' | 'closed' = 'serving'
+  // `flushing` begins when the drain is over and the final image is about to be taken: from then on a write through
+  // the ledger could not be in the image, so the view is closed to every call until the tenant is closed or serving again.
+  private state: 'serving' | 'draining' | 'flushing' | 'closed' = 'serving'
   private inFlight = 0
   private whenIdle: (() => void) | null = null
   private renewTimer: ReturnType<typeof setTimeout> | null = null
@@ -229,8 +236,9 @@ class OpenTenant implements TenantHandle {
     this.epoch = deps.lease.epoch
     this.restoredFrom = deps.restored.restoredFrom
     this.raw = deps.restored.ledger
-    // The view checks the lease only: work that began before a handoff may finish, new work is refused at `run`.
-    this.ledger = guardedLedger(this.raw, () => deps.lease.assertHeld())
+    // Work that began before a handoff may finish and new work is refused at `run`; the view itself stays open while
+    // the drain waits, so writes made in that time are in the final image, and closes when the image is taken.
+    this.ledger = guardedLedger(this.raw, () => this.assertViewUsable())
   }
 
   isOpen(): boolean {
@@ -238,7 +246,7 @@ class OpenTenant implements TenantHandle {
   }
 
   isDraining(): boolean {
-    return this.state === 'draining'
+    return this.state === 'draining' || this.state === 'flushing'
   }
 
   /** Called once by the router, after the handle is registered. */
@@ -286,16 +294,21 @@ class OpenTenant implements TenantHandle {
 
   async handoff(): Promise<void> {
     if (this.state === 'closed') return
-    if (this.state === 'draining') throw new TenantDrainingError(this.deps.key)
+    if (this.isDraining()) throw new TenantDrainingError(this.deps.key)
     this.state = 'draining'
-    this.stopTimers()
+    // Only the periodic snapshots stop. The lease keeps being renewed through the drain and the final upload: both can
+    // take longer than a lease, and a handoff that let it lapse would flush into a prefix no successor reads.
+    this.stopSnapshotTimer()
     try {
       await this.idle()
+      // Closed meanwhile (abandoned, forgotten, lease lost): there is nothing left to flush, and a closed handle stays closed.
+      if (this.state !== 'draining') throw new TenantDrainingError(this.deps.key)
+      this.state = 'flushing'
       await this.snapshot()
     } catch (error) {
       // A flush that failed for want of a store leaves the tenant serving; one that failed because the lease is gone ends it.
       if (endsTenure(error)) this.markLost()
-      else {
+      else if (this.isDraining()) {
         this.state = 'serving'
         this.begin()
       }
@@ -316,14 +329,23 @@ class OpenTenant implements TenantHandle {
     this.state = 'closed'
     this.closeLedger()
     this.deps.detach(this)
+    // An upload already under way would land after the deletion and leave the tenant's image in the store, where nothing
+    // would look for it again. Snapshots queued behind it refuse to start now that the handle is closed.
+    await this.snapshotTail.catch(() => undefined)
     const outcome = await forgetTenant(this.deps.context)
     this.emit({ type: 'released', key: this.deps.key, epoch: this.epoch, flushed: false })
     return outcome
   }
 
   private assertServing(): void {
-    if (this.state === 'draining') throw new TenantDrainingError(this.deps.key)
+    if (this.isDraining()) throw new TenantDrainingError(this.deps.key)
     this.deps.lease.assertHeld()
+  }
+
+  /** The gate of the ledger a consumer holds: the lease, and a view that is closed once the final image is being taken. */
+  private assertViewUsable(): void {
+    this.deps.lease.assertHeld()
+    if (this.state === 'flushing') throw new TenantDrainingError(this.deps.key)
   }
 
   private emit(event: RouterEvent): void {
@@ -335,6 +357,8 @@ class OpenTenant implements TenantHandle {
   }
 
   private async publishNow(): Promise<SnapshotManifest> {
+    // A snapshot queued before a forget, an abandon or a lost lease must not start after it.
+    if (this.state === 'closed') throw new TenantDrainingError(this.deps.key)
     try {
       const manifest = await publishSnapshot(this.deps.context)
       this.emit({ type: 'snapshot', key: this.deps.key, epoch: this.epoch, seq: manifest.seq })
@@ -362,6 +386,11 @@ class OpenTenant implements TenantHandle {
     this.state = 'closed'
     this.stopTimers()
     this.closeLedger()
+    // With everything flushed the durable copy is the authority, and this replica keeps no copy of the tenant's data. An
+    // abandoned tenant keeps its file: it may hold writes that exist nowhere else.
+    if (flushed) {
+      try { discardLocalLedger(this.deps.context) } catch { /* a leftover file is discarded at the next restore */ }
+    }
     this.deps.detach(this)
     try {
       await this.deps.lease.release()
@@ -382,13 +411,18 @@ class OpenTenant implements TenantHandle {
 
   private stopTimers(): void {
     if (this.renewTimer) clearTimeout(this.renewTimer)
-    if (this.snapshotTimer) clearTimeout(this.snapshotTimer)
     this.renewTimer = null
+    this.stopSnapshotTimer()
+  }
+
+  private stopSnapshotTimer(): void {
+    if (this.snapshotTimer) clearTimeout(this.snapshotTimer)
     this.snapshotTimer = null
   }
 
   private scheduleRenewal(): void {
-    if (!this.deps.autoRenew || this.state === 'closed') return
+    // Idempotent: a handoff that fails resumes service while its renewals never stopped, and must not start a second chain.
+    if (!this.deps.autoRenew || this.state === 'closed' || this.renewTimer) return
     this.renewTimer = setTimeout(() => { void this.renewTick() }, this.deps.renewEveryMs)
     this.renewTimer.unref()
   }
@@ -405,7 +439,7 @@ class OpenTenant implements TenantHandle {
   }
 
   private scheduleSnapshot(): void {
-    if (this.deps.snapshotEveryMs <= 0 || this.state === 'closed') return
+    if (this.deps.snapshotEveryMs <= 0 || this.state === 'closed' || this.snapshotTimer) return
     this.snapshotTimer = setTimeout(() => { void this.snapshotTick() }, this.deps.snapshotEveryMs)
     this.snapshotTimer.unref()
   }
@@ -499,7 +533,14 @@ export class TenantRouter {
 
   private async open(organization: string, ledgerTenant: string, key: string): Promise<TenantHandle> {
     const { options } = this
-    const emit = (event: RouterEvent): void => { options.onEvent?.(event) }
+    // A broken observer must never leave a lease held and unrenewed: it is told what happened, and nothing it throws matters.
+    const emit = (event: RouterEvent): void => {
+      try {
+        options.onEvent?.(event)
+      } catch {
+        // Ignored on purpose.
+      }
+    }
     const lease = await TenantLease.acquire({
       store: options.leases,
       key,

@@ -269,6 +269,9 @@ export async function publishSnapshot(context: EpochCopyContext, options: { nowM
     if (!await durable.putIfAbsent(snapshotKeyOf(key, lease.epoch, seq, 'json'), Buffer.from(JSON.stringify(manifest)))) {
       throw new CopyConflictError(`the manifest of ${refLabel(lease.epoch, seq)} already exists`)
     }
+    // The upload took time. An image that landed after the lease lapsed may sit above the base a successor already
+    // pinned, and is then never read: reporting it as published would tell a caller its writes are safe when they are not.
+    lease.assertHeld()
     return manifest
   } finally {
     rmSync(scratch, { recursive: true, force: true })
@@ -433,6 +436,15 @@ export async function restoreTenantLedger(context: EpochCopyContext): Promise<Re
  * read an older copy even if a superseded owner uploads one afterwards; then every durable copy and the
  * local files go; then the lease is handed back. The caller closes the tenant's ledger first.
  */
+/**
+ * Removes the local ledger files (the database and its -wal and -shm) of a tenure that flushed everything. Other files
+ * of the tenant's directory, such as a planner's working files, are not the ledger's and stay.
+ */
+export function discardLocalLedger(context: EpochCopyContext): void {
+  const file = ledgerDbPath(context.tenantRoot)
+  for (const path of [file, `${file}-wal`, `${file}-shm`]) rmSync(path, { force: true })
+}
+
 export async function forgetTenant(context: EpochCopyContext): Promise<{ readonly deletedObjects: number; readonly floor: number }> {
   const key = assertContext(context)
   context.lease.assertHeld()
