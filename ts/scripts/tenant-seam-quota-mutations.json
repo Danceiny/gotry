@@ -153,8 +153,8 @@
       "id": "Q22",
       "file": "src/tenant-seam/quotas.ts",
       "note": "a forgotten tenant stays in its organization's ledger total",
-      "find": "    if (organizationAccount) organizationAccount.ledgerBytes -= account.ledgerBytes\n",
-      "replace": ""
+      "find": "    const organizationAccount = this.organizations.get(seam.organization)\n    if (organizationAccount) organizationAccount.ledgerBytes -= account.ledgerBytes\n",
+      "replace": "    const organizationAccount = this.organizations.get(seam.organization)\n"
     },
     {
       "id": "Q23",

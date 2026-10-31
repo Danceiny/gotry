@@ -138,9 +138,9 @@
     {
       "id": "B20",
       "file": "capabilities/session/bridge-ledger.ts",
-      "find": "    db.exec('DROP INDEX IF EXISTS bridge_events_idem_key')\n",
+      "find": "  if (hasIndex(db, 'bridge_events_idem_key')) db.transaction(() => { db.exec('DROP INDEX IF EXISTS bridge_events_idem_key') }).immediate()\n",
       "replace": "",
-      "note": "migration keeps the legacy single-column idempotency index"
+      "note": "the single-column idempotency index of a legacy file, or of an older binary's reopen, is never dropped (L5, L6)"
     },
     {
       "id": "B21",
@@ -228,20 +228,13 @@
     },
     {
       "id": "B33",
-      "file": "capabilities/session/bridge-ledger.ts",
-      "note": "the single-column idempotency index of an older binary is not dropped on a later open (L6)",
-      "find": "  if (hasIndex(db, 'bridge_events_idem_key')) db.transaction(() => { db.exec('DROP INDEX IF EXISTS bridge_events_idem_key') }).immediate()\n",
-      "replace": ""
-    },
-    {
-      "id": "B34",
       "file": "src/backend/modules/session-search.ts",
       "note": "a malformed admission return is trusted: the handler dereferences it and the process is at risk (M8)",
       "find": "      if (typeof decision !== 'object' || decision === null || typeof decision.ok !== 'boolean') throw new Error('admission_decision_malformed')\n",
       "replace": ""
     },
     {
-      "id": "B35",
+      "id": "B34",
       "file": "src/backend/modules/session-search.ts",
       "note": "the organization-scoped module accepts the cdp transport (M9)",
       "find": "  if (options.callerOrganization && resolveTransportMode() !== 'extension') throw new Error('session_search_organization_requires_extension_transport')\n",
