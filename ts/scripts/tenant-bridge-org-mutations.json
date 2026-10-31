@@ -1,0 +1,251 @@
+{
+  "suite": "scripts/tenant-bridge-org-tests.ts",
+  "timeoutMs": 120000,
+  "mutations": [
+    {
+      "id": "B1",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "  if (entry.organization !== organization) return false\n",
+      "replace": "",
+      "note": "job matching without organization equality"
+    },
+    {
+      "id": "B2",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "          if (belongsToAnotherOrganization(jobId, organization)) {\n            finish(404, { ok: false, error: 'unknown-job' })\n            return\n          }\n",
+      "replace": "",
+      "note": "no foreign-result check: the post is accepted as a normal result"
+    },
+    {
+      "id": "B3",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "          if (belongsToAnotherOrganization(jobId, organization)) {\n            finish(404, { ok: false, error: 'unknown-job' })\n            return\n          }\n",
+      "replace": "          if (belongsToAnotherOrganization(jobId, organization)) {\n            record('orphan-result', () => store!.recordOrphanResult(organization, jobId, parsed))\n            finish(404, { ok: false, error: 'unknown-job' })\n            return\n          }\n",
+      "note": "the foreign check still files an orphan row"
+    },
+    {
+      "id": "B4",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "`UPDATE bridge_jobs SET status='resolved', result_json=@result, updated_at=@ts WHERE id=@id AND organization=@organization`",
+      "replace": "`UPDATE bridge_jobs SET status='resolved', result_json=@result, updated_at=@ts WHERE id=@id`",
+      "note": "markResolved without the organization filter"
+    },
+    {
+      "id": "B5",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "FROM bridge_pacing WHERE organization=@organization AND site=@site`",
+      "replace": "FROM bridge_pacing WHERE site=@site`",
+      "note": "pacing read by site only"
+    },
+    {
+      "id": "B6",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "ON bridge_events(organization, idem_key) WHERE idem_key IS NOT NULL;",
+      "replace": "ON bridge_events(idem_key) WHERE idem_key IS NOT NULL;",
+      "note": "idempotency index without organization"
+    },
+    {
+      "id": "B7",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "PRIMARY KEY (organization, client_id)",
+      "replace": "PRIMARY KEY (client_id)",
+      "note": "client registry keyed by client id only"
+    },
+    {
+      "id": "B8",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "queued: queue.filter((q) => q.organization === org).length,",
+      "replace": "queued: queue.length,",
+      "note": "stats count every organization's queue"
+    },
+    {
+      "id": "B9",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "const seen = lastSeenAt.get(assertOrganizationId(organization)) ?? 0",
+      "replace": "const seen = Math.max(0, ...lastSeenAt.values())",
+      "note": "connected-state ignores the organization"
+    },
+    {
+      "id": "B10",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "        if (!isBridgeOrganization(organization)) {\n          resolve({ ok: false, reason: 'bridge-unavailable', summary: '指定的组织标识无效' })\n          return\n        }\n",
+      "replace": "",
+      "note": "submit skips organization validation"
+    },
+    {
+      "id": "B11",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "            organization: row.organization,\n            resolve: null as unknown as (o: SubmitOutcome) => void,\n            timer: null,\n          }\n          const settle = armSettle(entry)\n          entry.resolve = settle\n          const remaining = row.timeout_at !== null ? Math.max(row.timeout_at - now(), 1) : 30_000\n          entry.timer = setTimeout(() => settle({ ok: false, reason: 'timeout', summary: `恢复作业 ${row.id} 超时未回包` }), remaining)\n          if (!dispatchToParked(entry)) queue.push(entry)",
+      "replace": "            organization: 'local',\n            resolve: null as unknown as (o: SubmitOutcome) => void,\n            timer: null,\n          }\n          const settle = armSettle(entry)\n          entry.resolve = settle\n          const remaining = row.timeout_at !== null ? Math.max(row.timeout_at - now(), 1) : 30_000\n          entry.timer = setTimeout(() => settle({ ok: false, reason: 'timeout', summary: `恢复作业 ${row.id} 超时未回包` }), remaining)\n          if (!dispatchToParked(entry)) queue.push(entry)",
+      "note": "recoverOnBoot restores queued jobs under local"
+    },
+    {
+      "id": "B12",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "submit: (job, submitOpts) => queueHandle.submit(job, { ...submitOpts, organization: bound }),",
+      "replace": "submit: (job, submitOpts) => queueHandle.submit(job, { organization: bound, ...submitOpts }),",
+      "note": "forOrganization lets the caller override the bound organization"
+    },
+    {
+      "id": "B13",
+      "file": "src/backend/modules/session-search.ts",
+      "find": "if (resolved === null || !isBridgeOrganization(resolved)) {",
+      "replace": "if (resolved === null) {",
+      "note": "module trusts any non-null resolved organization"
+    },
+    {
+      "id": "B14",
+      "file": "src/backend/modules/session-search.ts",
+      "find": "try { admitted.release?.() } catch { /* 释放额度的失败不反噬已写出的响应 */ }",
+      "replace": "try { /* never released */ } catch { /* 释放额度的失败不反噬已写出的响应 */ }",
+      "note": "admission release never runs"
+    },
+    {
+      "id": "B15",
+      "file": "src/backend/modules/session-search.ts",
+      "find": "const lockKey = organization === BRIDGE_DEFAULT_ORGANIZATION ? supplier : `${organization}/${supplier}`",
+      "replace": "const lockKey = supplier",
+      "note": "single-flight lock shared by all organizations"
+    },
+    {
+      "id": "B16",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "      const organization = requested\n",
+      "replace": "      const headerOrganization = req.headers['x-gotry-organization']\n      const organization = typeof headerOrganization === 'string' && isBridgeOrganization(headerOrganization) ? headerOrganization : requested\n",
+      "note": "the caller organization may be taken from a request header"
+    },
+    {
+      "id": "B17",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "    if (existing.organization !== org) throw new Error('bridge-job-organization-mismatch')\n",
+      "replace": "",
+      "note": "orphan recording may overwrite another organization's job"
+    },
+    {
+      "id": "B18",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "      const owner = store.organizationOfJob(jobId)\n      return owner !== null && owner !== organization",
+      "replace": "      return false",
+      "note": "ledger-only jobs of another organization are not recognised as foreign"
+    },
+    {
+      "id": "B19",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "if (table === 'bridge_jobs' || table === 'bridge_events') {",
+      "replace": "if (table === 'bridge_jobs' || table === 'bridge_events' || table === 'bridge_clients') {",
+      "note": "migration adds a column to the client table instead of rebuilding its key"
+    },
+    {
+      "id": "B20",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "    db.exec('DROP INDEX IF EXISTS bridge_events_idem_key')\n",
+      "replace": "",
+      "note": "migration keeps the legacy single-column idempotency index"
+    },
+    {
+      "id": "B21",
+      "file": "src/backend/modules/session-search.ts",
+      "find": "if (ledger.insertEvent(organization, input)) accepted += 1",
+      "replace": "if (ledger.insertEvent('local', input)) accepted += 1",
+      "note": "events are filed under local whatever the caller organization"
+    },
+    {
+      "id": "B22",
+      "file": "src/backend/modules/session-search.ts",
+      "find": "(scoped ? queue.forOrganization(organization) : queue)",
+      "replace": "queue",
+      "note": "the bridge handed to the search is not bound to the caller organization"
+    },
+    {
+      "id": "B23",
+      "file": "src/backend/modules/session-search.ts",
+      "find": "const pacing = ledger?.pacingOf(organization, supplier)",
+      "replace": "const pacing = ledger?.pacingOf('local', supplier)",
+      "note": "ledger cooldown read for local only"
+    },
+    {
+      "id": "B24",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "caller === undefined ? BRIDGE_DEFAULT_ORGANIZATION : caller.organization",
+      "replace": "caller?.organization ?? BRIDGE_DEFAULT_ORGANIZATION",
+      "note": "a caller without an organization falls back to local"
+    },
+    {
+      "id": "B25",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "SELECT 1 FROM bridge_events WHERE organization=@organization AND idem_key=@idem",
+      "replace": "SELECT 1 FROM bridge_events WHERE idem_key=@idem",
+      "note": "event deduplication across organizations"
+    },
+    {
+      "id": "B26",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "`SELECT * FROM bridge_jobs WHERE id=@id AND organization=@organization`",
+      "replace": "`SELECT * FROM bridge_jobs WHERE id=@id`",
+      "note": "organization-scoped job read ignores the organization"
+    },
+    {
+      "id": "B27",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "WHERE id=@id AND organization=@organization`,\n    ).run({ id: jobId, organization: org, client: claim.clientId ?? null, origin: claim.origin, ts })",
+      "replace": "WHERE id=@id`,\n    ).run({ id: jobId, organization: org, client: claim.clientId ?? null, origin: claim.origin, ts })",
+      "note": "markClaimed without the organization filter"
+    },
+    {
+      "id": "B28",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "lastSeenAt.set(organization, now())",
+      "replace": "lastSeenAt.set(BRIDGE_DEFAULT_ORGANIZATION, now())",
+      "note": "every organization's heartbeat is recorded as local"
+    },
+    {
+      "id": "B29",
+      "file": "capabilities/session/extension-bridge.ts",
+      "find": "record('orphan-result', () => store!.recordOrphanResult(organization, jobId, parsed))",
+      "replace": "record('orphan-result', () => store!.recordOrphanResult(BRIDGE_DEFAULT_ORGANIZATION, jobId, parsed))",
+      "note": "orphan results are filed under local"
+    },
+    {
+      "id": "B30",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "find": "login_sites_json TEXT NOT NULL DEFAULT '[]',\n  PRIMARY KEY (organization, client_id)",
+      "replace": "login_sites_json TEXT NOT NULL DEFAULT '[]',\n  cookie_value TEXT,\n  PRIMARY KEY (organization, client_id)",
+      "note": "a cookie-value column appears in the schema"
+    },
+    {
+      "id": "B31",
+      "file": "src/backend/modules/session-search.ts",
+      "note": "the module no longer keys the in-process pacing gate by organization (M7)",
+      "find": "        // the in-process pacing gate is keyed like the lock: one organization's searches never pace another's\n        pacingKey: lockKey,\n",
+      "replace": ""
+    },
+    {
+      "id": "B32",
+      "file": "capabilities/session-search.ts",
+      "note": "the in-process pacing gate ignores its key and paces by site alone (M7)",
+      "find": "  const paceKey = q.pacingKey ?? site\n",
+      "replace": "  const paceKey = site\n"
+    },
+    {
+      "id": "B33",
+      "file": "capabilities/session/bridge-ledger.ts",
+      "note": "the single-column idempotency index of an older binary is not dropped on a later open (L6)",
+      "find": "  if (hasIndex(db, 'bridge_events_idem_key')) db.transaction(() => { db.exec('DROP INDEX IF EXISTS bridge_events_idem_key') }).immediate()\n",
+      "replace": ""
+    },
+    {
+      "id": "B34",
+      "file": "src/backend/modules/session-search.ts",
+      "note": "a malformed admission return is trusted: the handler dereferences it and the process is at risk (M8)",
+      "find": "      if (typeof decision !== 'object' || decision === null || typeof decision.ok !== 'boolean') throw new Error('admission_decision_malformed')\n",
+      "replace": ""
+    },
+    {
+      "id": "B35",
+      "file": "src/backend/modules/session-search.ts",
+      "note": "the organization-scoped module accepts the cdp transport (M9)",
+      "find": "  if (options.callerOrganization && resolveTransportMode() !== 'extension') throw new Error('session_search_organization_requires_extension_transport')\n",
+      "replace": ""
+    }
+  ]
+}

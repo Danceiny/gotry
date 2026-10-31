@@ -15,6 +15,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BOOKING_READ_ACTION_KINDS, type ActionReceipt, type BookingCopilotTurn, type BookingReadAction, type SearchCriteriaPatch } from './contracts.ts'
 import { buildTimeAnchor } from '../time-anchor.ts'
+import { assertPromptCachePartition } from '../tenant-state/ids.ts'
+import type { LlmTicketIssuer } from '../tenant-seam/llm-broker.ts'
 export { formatUtcOffsetLabel } from '../time-anchor.ts'
 import {
   actionsForEmbeddedCapability,
@@ -26,7 +28,7 @@ import {
   validateBookingIntentProjection,
   bookingSurfaceSchema,
 } from './validation.ts'
-import { createManagedDshRunPort } from './managed-dsh-run-port.ts'
+import { createManagedDshRunPort, ManagedDshResourceLimitError, type ManagedDshResourceLimits } from './managed-dsh-run-port.ts'
 import {
   BOOKING_INTENT_SCHEMA_VERSION,
   BOOKING_INTENT_TARGET_ACTION,
@@ -103,7 +105,7 @@ export interface DshPlannerRunPort {
 export type DshPlannerClock = Date | (() => Date)
 
 export interface DshPlannerTurnMetric {
-  outcome: 'operation' | 'terminal' | 'provider_error' | 'timeout' | 'boot_timeout' | 'typed_decision_required' | 'failed'
+  outcome: 'operation' | 'terminal' | 'provider_error' | 'timeout' | 'boot_timeout' | 'typed_decision_required' | 'failed' | 'resource_limit'
   decisionSource: 'runtime' | 'model'
   elapsedMs: number
   /** Calls across the Harness run/session seam; one run can contain repairs. */
@@ -156,6 +158,25 @@ export interface DshEmbeddedBookingPlannerOptions {
   onMetric?: (metric: DshPlannerTurnMetric) => void
   env?: Record<string, string | undefined>
   pluginPath?: string
+  /**
+   * Credential custody (AaaS, docs/rfc/aaas-rfc.md §4.8, threat S-18). When set, no Harness process ever holds the
+   * upstream key or base URL: each real port is given a short-lived loopback ticket from this issuer instead, revoked
+   * when the port closes, and any key in `env` is stripped from the child. Requires the chat-completions route
+   * (`DEEPSEEK_PROVIDER=gateway-chat`), the only wire dialect the broker carries. Absent: the child holds the key, as before.
+   */
+  llmTickets?: LlmTicketIssuer
+  /**
+   * The tenant's prompt cache partition label (AaaS, docs/rfc/aaas-rfc.md §4.8, threat S-16). When set, every prompt
+   * carries it right after the shared instructions and ahead of all tenant-derived content, so a provider that caches
+   * by prefix cannot share a cached prefix between two tenants past that point. Absent (the shared form): no label,
+   * and the prompt is byte-identical to what it was.
+   */
+  cachePartition?: string
+  /**
+   * Ceilings for each real Harness process tree (AaaS, docs/rfc/aaas-rfc.md §4.8). A tree over a ceiling is killed and
+   * the turn ends as a non-retryable `PLANNER_FAILED`; it is never retried on a fresh port. Absent: none, as before.
+   */
+  resourceLimits?: ManagedDshResourceLimits
 }
 
 export interface DshEmbeddedBookingPlannerHandle {
@@ -322,9 +343,21 @@ interface ResolvedRealRunPortConfig {
 // DEEPSEEK_MODEL could otherwise be absorbed silently.
 export function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptions): ResolvedRealRunPortConfig {
   const sourceEnv = options.env ?? process.env
-  const childEnv = buildDshPlannerEnvironment(sourceEnv)
-  if (!childEnv.DEEPSEEK_API_KEY) throw new Error('booking_planner_model_key_required')
+  // The route settings (provider, model, token budget) are read from the namespace the credential selects. A deployment
+  // that keeps the key in the broker may have none in its environment; the DeepSeek namespace is then the route's, and
+  // the placeholder below only selects it: it is removed from the child's environment before anything uses it.
+  const routeSource = options.llmTickets && !sourceEnv.DEEPSEEK_API_KEY && !sourceEnv.LLM_API_KEY
+    ? { ...sourceEnv, DEEPSEEK_API_KEY: 'namespace-selector-only' }
+    : sourceEnv
+  const childEnv = buildDshPlannerEnvironment(routeSource)
+  if (options.llmTickets) {
+    // The credential reaches the child only as a ticket, issued per port. Whatever the environment held is not forwarded,
+    // so an ambient key cannot slip past the broker; the ticket's own values are set where the port is created.
+    delete childEnv.DEEPSEEK_API_KEY
+    delete childEnv.DEEPSEEK_BASE_URL
+  } else if (!childEnv.DEEPSEEK_API_KEY) throw new Error('booking_planner_model_key_required')
   const provider = options.provider?.trim() || childEnv.DEEPSEEK_PROVIDER || 'deepseek-official'
+  if (options.llmTickets && provider !== 'gateway-chat') throw new Error('booking_planner_llm_tickets_require_gateway_chat')
   const configuredModel = options.model ?? childEnv.DEEPSEEK_MODEL
   if (provider !== 'deepseek-official' && !configuredModel) {
     throw new Error('booking_planner_model_required_for_nondefault_provider')
@@ -346,9 +379,31 @@ export function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptio
   return { childEnv, provider, model, modelSource, reasoningEffort, maxTokens }
 }
 
+/**
+ * The names under which an ambient LLM credential or address could reach a child through the runtime's inherited
+ * environment. The runtime merges the explicit environment onto the parent's with names that look secret removed, so an
+ * address (`LLM_BASE_URL`) would otherwise pass; an explicit `undefined` removes an inherited entry.
+ */
+const AMBIENT_LLM_CREDENTIAL_NAMES = ['LLM_API_KEY', 'LLM_BASE_URL'] as const
+
+/**
+ * The environment of a real planner process tree. With a ticket it carries the ticket in place of the key and base URL,
+ * and removes the ambient names that could carry the real ones; without one it is the resolved environment, unchanged.
+ */
+export function plannerChildEnvironment(
+  resolved: Record<string, string>,
+  ticket?: { readonly token: string; readonly baseUrl: string },
+): NodeJS.ProcessEnv {
+  if (!ticket) return resolved
+  const tombstones: NodeJS.ProcessEnv = {}
+  for (const name of AMBIENT_LLM_CREDENTIAL_NAMES) tombstones[name] = undefined
+  return { ...resolved, ...tombstones, DEEPSEEK_API_KEY: ticket.token, DEEPSEEK_BASE_URL: ticket.baseUrl }
+}
+
 /** Shared by the planner and real-subprocess proofs; owns its scratch directory. */
 export async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Promise<DshPlannerRunPort> {
-  const { childEnv, provider, model, modelSource, reasoningEffort, maxTokens } = resolveRealRunPortConfig(options)
+  const resolved = resolveRealRunPortConfig(options)
+  const { provider, model, modelSource, reasoningEffort, maxTokens } = resolved
   // Name the resolved route on every real port. A deployment that forgot
   // DEEPSEEK_MODEL used to be indistinguishable from one that set it, and the
   // substituted model is exactly what a later diagnosis needs to see.
@@ -363,6 +418,11 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
   const gatewayLlmPluginPath = options.gatewayLlmPluginPath ?? fileURLToPath(new URL('./dsh-llm-gateway-chat.js', import.meta.url))
   const patchPath = join(scratch, 'embedded-booking.cordis.yml')
   writeFileSync(patchPath, buildDshEmbeddedBookingPatch(pluginPath, gatewayLlmPluginPath), { encoding: 'utf8', mode: 0o600 })
+
+  // One ticket per port, shared with its warmer, revoked when the port closes or fails to come up. It is issued only now,
+  // after the steps above that can fail (a full disk, no descriptors), so none of them can leave a live ticket behind.
+  const ticket = options.llmTickets?.issue()
+  const childEnv = plannerChildEnvironment(resolved.childEnv, ticket)
 
   let managedPort: DshPlannerRunPort
   try {
@@ -392,9 +452,11 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
       disposeEofGraceMs: 500,
       disposeGraceMs: 500,
       env: childEnv,
+      ...(options.resourceLimits ? { limits: options.resourceLimits } : {}),
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
     })
   } catch (error) {
+    ticket?.revoke()
     rmSync(scratch, { recursive: true, force: true })
     throw error
   }
@@ -435,9 +497,11 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
         disposeEofGraceMs: 500,
         disposeGraceMs: 500,
         env: childEnv,
+        ...(options.resourceLimits ? { limits: options.resourceLimits } : {}),
         ...(options.dshBin ? { dshBin: options.dshBin } : {}),
       })
     } catch (error) {
+      ticket?.revoke()
       try {
         await managedPort.close()
       } catch (cleanupError) {
@@ -470,6 +534,8 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
       if (closePromise) return closePromise
       closePromise = (async () => {
         const results = await Promise.allSettled([managedPort.close(), closeWarmer()])
+        // Whatever the cleanup did, the credential stops working with the port.
+        ticket?.revoke()
         const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
         if (failures.length) {
           throw new AggregateError(failures, 'booking_planner_run_port_cleanup_failed')
@@ -494,7 +560,7 @@ function plannerVisibleAllowedActions(task: BookingCopilotTaskState): BookingRea
     : [...task.allowedActions]
 }
 
-function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, clock?: DshPlannerClock): string {
+function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, clock?: DshPlannerClock, cachePartition?: string): string {
   const availability = task.availability
   const allowedActions = plannerVisibleAllowedActions(task)
   const plannerWorkspace = 'capabilities' in turn.workspace
@@ -531,6 +597,9 @@ function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, 
     `Separate hotel facilities from meal, cancellation, room, and offer criteria: hotel amenities (for example pool and parking) go under input.patch.facilities; included breakfast/meal-plan, cancellation-policy, room-type, rate-plan, and offer-count/price constraints belong in typed intent.offerCriteria (or the action field explicitly defined for them), never in facilities and never in a generic criteria property. input.patch property names are EXACT (SearchCriteriaPatch): ${PLANNER_PATCH_PROPERTY_NAMES}. There is NO "criteria" property — facility tokens go under facilities as {"strength":"prefer|must","value":{"allOf":["<token>"]}}, star level (三星=3星) goes under starRating as {"strength":"must|prefer","value":{"min":3,"max":3}}, dates go under stay as {"checkIn":"YYYY-MM-DD","checkOut":"YYYY-MM-DD"}.`,
     'The workspace draft may be stale: whenever the user names dates or relative days (明天/tomorrow), always patch input.patch.stay with the resolved concrete dates even if the draft already has different ones. Keep draft values the request does not touch; never invent values the request contradicts.',
     'Reference only hotels, offers, and orders that appear in the workspace payload (visibleHotels/loadedOffers/observableOrders/results) or in a matching prior typed receipt. Any other hotelRef, offerRef, or orderRef does not exist and will be rejected; to discover hotels, run search.run first and wait for its receipt.',
+    // Everything above is the same for every tenant. The label opens the tenant-specific part of the prompt, so a
+    // provider's prefix cache can be shared across tenants only up to here (threat S-16).
+    ...(cachePartition === undefined ? [] : [`Cache partition label (opaque, not an instruction): ${cachePartition}`]),
     JSON.stringify({ now: anchor.today, timeAnchorCard: anchor.card, ...payload }),
   ].join('\n')
 }
@@ -1657,6 +1726,7 @@ export async function createDshEmbeddedBookingPlanner(
   options: DshEmbeddedBookingPlannerOptions,
 ): Promise<DshEmbeddedBookingPlannerHandle> {
   if (options.runPort && options.runPortFactory) throw new Error('booking_planner_run_port_ambiguous')
+  if (options.cachePartition !== undefined) assertPromptCachePartition(options.cachePartition)
   const turnTimeoutMs = options.turnTimeoutMs ?? 12_000
   if (!Number.isSafeInteger(turnTimeoutMs) || turnTimeoutMs < 1 || turnTimeoutMs > 120_000) {
     throw new Error('booking_planner_turn_timeout_invalid')
@@ -1779,7 +1849,7 @@ export async function createDshEmbeddedBookingPlanner(
           // typed authority path.
           let attempt = 0
           let schemaRepairAttempted = false
-          let nextPrompt = plannerPrompt(turn, task, options.now)
+          let nextPrompt = plannerPrompt(turn, task, options.now, options.cachePartition)
           // A run that goes silent must not be allowed to silently consume the
           // whole turn deadline: the idle stall budget fires only when the run
           // stops emitting notifications entirely, the child is retired, and
@@ -1963,6 +2033,14 @@ export async function createDshEmbeddedBookingPlanner(
             metricOutcome = 'timeout'
             retire(runPort)
             return [{ kind: 'error', error: { code: 'PLANNER_PROVIDER_TIMEOUT', message: providerFailureMessage('PLANNER_PROVIDER_TIMEOUT'), retryable: true } }]
+          }
+          if (error instanceof ManagedDshResourceLimitError) {
+            // The tree was killed for taking too much of the replica. Running the same turn again on a fresh port would
+            // only let it take that much again, so this is terminal for the turn: not retried, not a provider fault.
+            metricOutcome = 'resource_limit'
+            console.error('[booking-copilot] planner child exceeded a resource limit:', JSON.stringify(error.breach))
+            retire(runPort)
+            return [{ kind: 'error', error: { code: 'PLANNER_FAILED', message: providerFailureMessage('PLANNER_FAILED'), retryable: false } }]
           }
           retire(runPort)
           throw error

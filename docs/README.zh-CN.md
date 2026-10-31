@@ -208,6 +208,7 @@
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.zh-CN.md) | 公开 issue→PR→review→merge 台账；另载外部 PR（含自动化机器人）分诊/核验/裁决规则 |
 | [ops/security.md](ops/security.zh-CN.md) | 安全策略与漏洞披露：上报通道、triage 纪律、append-only 安全事件台账 |
 | [ops/ledger-tenant-repair.md](ops/ledger-tenant-repair.zh-CN.md) | #254 账本 tenant 修复 owner-gate 清单（dry-run → 授权 → apply → 私有回执） |
+| [ops/aaas-capacity-baseline.md](ops/aaas-capacity-baseline.zh-CN.md) | AaaS 容量基线（实测，living）：每个打开的租户、每次接管、每个已启动 planner 的开销，以及哪些数字仍需真实节点探测 |
 
 ### assets/ 与 superpowers/
 
