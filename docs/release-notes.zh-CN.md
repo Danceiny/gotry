@@ -38,6 +38,10 @@
 
 全栈回归在离线环境和本机真实进程上覆盖 AaaS 层：多进程故障注入演练、多租户对抗套件，以及配额、治理器与凭证代理的检查。这些都还没有部署：没有生产认证器，多副本运行（A3）也没跑过。`gotry` CLI 与 `web` 不使用租户层。登录配对只在超时路径上做过 live 实证，登录成功路径由离线契约钉住。是否已发布，只以通过的 registry 回拉回执为准。
 
+### 已发布
+
+2026-11-01 以 `TAG=latest ./scripts/publish-npm.sh`（dist-tag 显式传入，#50①）发布 `@danceiny/gotry@0.2.0-rc.33`，并从 registry 回拉校验：`npm view` 显示 `latest` → `0.2.0-rc.33`（shasum `ef0d9324eeea11ed938cad275bf8401e2d978fe8`，627 个文件），与发布前由已打 tag 的源码树经 `npm pack --dry-run` 预测的 shasum 一致，下载的 tarball 字节哈希同样吻合。在干净机器上（全新 HOME 与 npm 缓存、仅官方 registry、无 LLM key）`npx @danceiny/gotry@0.2.0-rc.33` 端到端通过：`doctor` 打印报告，dist 入口能加载 `gotry-tools` 插件，`web` 可启动（带 token 的 URL 303 → 200，无 token 为 401），无凭证的一次性任务以宿主的缺凭证提示失败，而不是抛出堆栈。GitHub Release：[v0.2.0-rc.33](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.33)。兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。
+
 ---
 
 ## v0.2.0-rc.32 · 2026-10-14
