@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.33] - 2026-10-31
+
+### Added
+
+- epoch-scoped durable copies — publish… (#679)
+- tenant ownership core — epoch-fenced lease store and holder session (A1.1)… (#678)
+- chat/completions gateway LLM adapter for dsh 0.2… (#670)
+- GUI 车道余尾收口——登录态配对 + 多程表单驱动(#661/#663/#664 tails)… (#668)
+
+### Fixed
+
+- bridge extension origin allowlist configurable via env… (#686)
+- close the review findings on the credential broker… (#687)
+- bound the handoff drain, make forget win, and close the holes left in the A1 guards… (#688)
+- a graceful handoff loses no acknowledged write… (#684)
+- never retry a planner run on the port it just retired… (#676)
+- stop schema repairs after one retry… (#673)
+- retry once when a provider tool call fails schema validation (#33640)… (#671)
+- retry once on a fresh run port after a cold boot timeout… (#669)
+
+### Documentation
+
+- record A0 RFC acceptance — ADR-15 restated as keyed single writer… (#677)
+- A0 design — per-tenant single-writer RFC and threat model… (#675)
+- align version baselines with verified rc.32 publish… (#667)
+
+### Tests
+
+- repair the mutation lists that #683 and the review follow-ups made stale… (#685)
+
 ## [0.2.0-rc.32] - 2026-10-14
 
 ### Added

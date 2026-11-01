@@ -6,6 +6,40 @@
 
 ---
 
+## v0.2.0-rc.33 · 2026-10-31
+
+**为什么发这版。** GoTry 一直是单人本机 agent。AaaS 立项（[#674](https://github.com/Danceiny/gotry/issues/674)）要把它变成多用户共用的云端服务，前两个阶段已进 `main`：每个租户恰好一个写者的状态层（A1），以及带配额和按租户执行上限的身份接缝（A2）。本版把它们以库代码形式发布，同时带上 UAT 中发现的 planner 修复和携程 GUI 车道的余下部分。扩展清单保持配对在 `0.2.0.33`，行为不变。
+
+### 新内容（自 rc.32）
+
+**多用户基座（AaaS A1–A2：按需启用，尚未部署）**
+
+- **每租户单写者**——每个租户的账本由带 epoch 围栏的租约守护。持久副本按 epoch 分区，被暂停的旧 owner 迟到的上传永远不会被恢复。租户路由器只交出受守卫的句柄，优雅交接在释放租约之前刷出每一笔已确认的写入。排不空的交接在 `drainTimeoutMs`（默认 120 秒）后结束（[#678](https://github.com/Danceiny/gotry/pull/678)、[#679](https://github.com/Danceiny/gotry/pull/679)、[#684](https://github.com/Danceiny/gotry/pull/684)、[#688](https://github.com/Danceiny/gotry/pull/688)）。
+- **租户接缝与配额**——booking-surface 服务新增多租户形态。每个请求先认证，再放进它自己的租户，并按租户和按组织的配额准入。对抗套件要求一切跨租户读写都被拒绝（[#679](https://github.com/Danceiny/gotry/pull/679)）。
+- **共享主机上的执行上限**——进程治理器限制每个租户 planner 的堆、进程树内存与 CPU。回环凭证代理让 LLM key 不进 planner 子进程，也从不转发上游的错误体。prompt 缓存按租户分区，浏览器 executor 绑定到所属组织（[#679](https://github.com/Danceiny/gotry/pull/679)、[#687](https://github.com/Danceiny/gotry/pull/687)）。实测的密度与恢复数字见[容量基线](ops/aaas-capacity-baseline.zh-CN.md)。
+
+**Planner 可靠性**
+
+- 冷启动超出本地启动预算时，换一个新的运行端口重试一次，绝不在已退役的端口上重试（[#669](https://github.com/Danceiny/gotry/pull/669)、[#676](https://github.com/Danceiny/gotry/pull/676)）。
+- dsh 0.2 的 planner 经 `gateway-chat` provider 访问只支持 chat/completions 的网关（[#670](https://github.com/Danceiny/gotry/pull/670)）。
+- 工具调用没通过 schema 校验时，有一次修复机会；修复仍失败，本回合按失败关闭（[#671](https://github.com/Danceiny/gotry/pull/671)、[#673](https://github.com/Danceiny/gotry/pull/673)）。
+
+**携程 GUI 车道与会话桥**
+
+- **登录配对**——遇到登录墙时，窗口停在站点官方登录页，等用户本人登录，然后在同一窗口重跑检索。GoTry 从不经手凭据（[#668](https://github.com/Danceiny/gotry/pull/668)）。
+- **多程航班**——两段、三段检索驱动站点自己的表单（[#668](https://github.com/Danceiny/gotry/pull/668)）。
+- **未打包扩展**——`GOTRY_SESSION_BRIDGE_EXTENSION_ORIGINS` 追加允许的 `chrome-extension://` origin，因为未打包扩展的 ID 随安装路径变化（[#686](https://github.com/Danceiny/gotry/pull/686)）。
+
+### 安装
+
+`npx @danceiny/gotry@0.2.0-rc.33 web`（Node ≥ 22.15）。`latest` 指向本版后 `npx @danceiny/gotry web` 等价；镜像滞后时请钉精确版本。
+
+### 验收边界
+
+全栈回归在离线环境和本机真实进程上覆盖 AaaS 层：多进程故障注入演练、多租户对抗套件，以及配额、治理器与凭证代理的检查。这些都还没有部署：没有生产认证器，多副本运行（A3）也没跑过。`gotry` CLI 与 `web` 不使用租户层。登录配对只在超时路径上做过 live 实证，登录成功路径由离线契约钉住。是否已发布，只以通过的 registry 回拉回执为准。
+
+---
+
 ## v0.2.0-rc.32 · 2026-10-14
 
 **为什么发这版。** 飞猪低价索引对无数据的「航线×日期」组合确定性失败（香港→长春 12-06 三连败而 12-05 成功），而携程会话面答不了「这条线哪天有票」——城市码表卡着主链路、往返没有已验证的 URL。本版把携程 GUI 车道做完整为产品能力：gotry 在隔离匿名窗口里驱动站点自己的检索表单、读站点自己的回包（[#661](https://github.com/Danceiny/gotry/issues/661)–[#664](https://github.com/Danceiny/gotry/issues/664)）。

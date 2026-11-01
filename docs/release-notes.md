@@ -6,6 +6,40 @@
 
 ---
 
+## v0.2.0-rc.33 · 2026-10-31
+
+**Why this release.** GoTry has run as one person's local agent. The AaaS initiative ([#674](https://github.com/Danceiny/gotry/issues/674)) turns it into a cloud service that many users share, and its first two phases are now on `main`: a state layer where every tenant has exactly one writer (A1), and an identity seam with quotas and per-tenant execution limits (A2). This release ships them as library code with planner fixes found in UAT and the rest of the Ctrip GUI lane. The extension manifest stays paired at `0.2.0.33`; its behavior is unchanged.
+
+### What's New (since rc.32)
+
+**Multi-user foundation (AaaS A1–A2: opt-in, not yet deployed)**
+
+- **One writer per tenant** — each tenant's ledger sits behind an epoch-fenced lease. Durable copies are scoped by epoch, so a late upload from a paused old owner is never restored. The tenant router hands out guarded handles only, and a graceful handoff flushes every acknowledged write before it releases the lease. A drain that cannot finish ends after `drainTimeoutMs` (default 120 s) ([#678](https://github.com/Danceiny/gotry/pull/678), [#679](https://github.com/Danceiny/gotry/pull/679), [#684](https://github.com/Danceiny/gotry/pull/684), [#688](https://github.com/Danceiny/gotry/pull/688)).
+- **Tenant seam and quotas** — the booking-surface server gains a multi-tenant form. Each request is authenticated, placed in its own tenant and admitted against per-tenant and per-organization quotas. An adversarial suite requires every cross-tenant read and write to be refused ([#679](https://github.com/Danceiny/gotry/pull/679)).
+- **Execution limits on a shared host** — a process governor bounds each tenant planner's heap, process-tree memory and CPU. A loopback credential broker keeps the LLM key out of planner child processes and never relays an upstream error body. Prompt-cache partitions are per tenant, and the browser executor is bound to its organization ([#679](https://github.com/Danceiny/gotry/pull/679), [#687](https://github.com/Danceiny/gotry/pull/687)). Measured density and recovery numbers are in the [capacity baseline](ops/aaas-capacity-baseline.md).
+
+**Planner reliability**
+
+- A cold boot that misses the local boot budget retries once on a fresh run port, and never on a port it already retired ([#669](https://github.com/Danceiny/gotry/pull/669), [#676](https://github.com/Danceiny/gotry/pull/676)).
+- dsh 0.2 planners reach gateways that only speak chat/completions through the `gateway-chat` provider ([#670](https://github.com/Danceiny/gotry/pull/670)).
+- A tool call that fails schema validation gets one repair attempt. If the repair also fails, the turn fails closed ([#671](https://github.com/Danceiny/gotry/pull/671), [#673](https://github.com/Danceiny/gotry/pull/673)).
+
+**Ctrip GUI lane and session bridge**
+
+- **Login pairing** — on a login wall, the window waits on the site's official login page while the user signs in, then repeats the search in the same window. GoTry never handles the credentials ([#668](https://github.com/Danceiny/gotry/pull/668)).
+- **Multi-leg flights** — two- and three-leg searches drive the site's own form ([#668](https://github.com/Danceiny/gotry/pull/668)).
+- **Unpacked extensions** — `GOTRY_SESSION_BRIDGE_EXTENSION_ORIGINS` adds allowed `chrome-extension://` origins, because an unpacked extension's ID changes with its install path ([#686](https://github.com/Danceiny/gotry/pull/686)).
+
+### Installation
+
+Run `npx @danceiny/gotry@0.2.0-rc.33 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
+
+### Acceptance boundary
+
+The full-stack regression covers the AaaS layer offline and on real local processes: a multi-process fault-injection drill, adversarial multi-tenant suites, and quota, governor and broker checks. Nothing here is deployed. There is no production authenticator, and multi-replica operation (A3) has not run. The `gotry` CLI and `web` do not use the tenant layer. Login pairing is proven live only on its timeout path; the signed-in path is held by an offline contract. Publication is established only by a passing registry pull-back receipt.
+
+---
+
 ## v0.2.0-rc.32 · 2026-10-14
 
 **Why this release.** The FlyAI low-price index deterministically fails on route×date combos with no data (HK→Changchun 12-06 fails 3/3 while 12-05 succeeds), and the Ctrip session surface could not answer "which dates have fares" — the city code table gated the main path and roundtrip had no verified URL. This release completes the Ctrip GUI lane as a product capability: gotry drives the site's own search form in an isolated anonymous window and reads the site's own responses ([#661](https://github.com/Danceiny/gotry/issues/661)–[#664](https://github.com/Danceiny/gotry/issues/664)).
