@@ -434,8 +434,9 @@ echo "=== 38. 会话扩展桥(#21 传输层方案 C:manifest 合同与 key→固
 (cd ts && npx tsx scripts/extension-tests.ts) || FAIL=1
 
 echo
-echo "=== 39. 可下单事实模型+产物事实闸(issue #46:gotry_bookable_fact.v1 hit/miss 落账/负事实 fail-closed/航司→机场映射 FD=DMK·VZ=BKK/联程仅 protected_connection/时刻矛盾/夜数·O&D·预算不变式/issues #301/#302 finite hotel/policy read-side claim coverage/locked golden 2027 E2E,纯离线) ==="
+echo "=== 39. 可下单事实模型+产物事实闸(issue #46:gotry_bookable_fact.v1 hit/miss 落账/负事实 fail-closed/航司→机场映射 FD=DMK·VZ=BKK/联程仅 protected_connection/时刻矛盾/夜数·O&D·预算不变式/issues #301/#302 finite hotel/policy read-side claim coverage/locked golden 2027 E2E;rc.33 证据日期绑定:标 ✅/实证、带锚点或写明票价的航班行必须引用同一出发日的事实(QR1019 12/1·EK329 12/17 两例),真实 apply() 的 write/present 前置闸含截止模式与 md/html 两种产物,纯离线) ==="
 (cd ts && npx tsx scripts/fact-gate-tests.ts | tail -1) || FAIL=1
+(cd ts && npx tsx scripts/evidence-date-binding-tests.ts | tail -1) || FAIL=1
 
 echo
 echo "=== 41. LLM 价格漂移监测(issue #49 长效机制:offline baseline 比对/fetch 首次写 fixture/up·down·new·removed 四向/坏 baseline SKIP/PR 段落含纪律注脚;零网络,纯离线合同) ==="
@@ -533,6 +534,14 @@ if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
   (cd ts && GOTRY_BRIDGE_E2E_BIN="$package_e2e_bin" npx tsx scripts/benchmark-environment-bridge-e2e.ts) || FAIL=1
 else
   echo "FAIL: benchmark packaged runtime unavailable"
+  FAIL=1
+fi
+echo
+echo "=== 48b. 证据日期绑定闸·安装包真实运行(rc.33 行程实测:干净安装的二进制经 dsh headless + loopback relay 依次 write R1(两条红眼航班标 ✅ 写在从未查询的日期)被 EVIDENCE_DATE_BINDING 拒且不落盘、write R2 落盘、拖过硬阈后研究工具被截止闸拒、present shell 写出的 R1 仍被拒、present R2 交付成功;事实注册表种在隔离 cwd,不碰真实 gotry-state) ==="
+if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
+  (cd ts && GOTRY_EVIDENCE_E2E_BIN="$package_e2e_bin" npx tsx scripts/evidence-date-guard-e2e.ts) || FAIL=1
+else
+  echo "FAIL: evidence date guard packaged runtime unavailable"
   FAIL=1
 fi
 echo

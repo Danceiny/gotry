@@ -58,7 +58,7 @@ GoTry 是覆盖「一次出发到下一次出发」的证据优先旅行 Agent�
 
 | 边界 | 不变量 |
 |---|---|
-| 事实 | 影响可行性、价格、政策或可订性的断言必须绑定注册证据；未知、借用、畸形、过期或矛盾锚点一律 fail-closed。 |
+| 事实 | 影响可行性、价格、政策或可订性的断言必须绑定注册证据；未知、借用、畸形、过期或矛盾锚点一律 fail-closed。以已核验口吻呈现的航班行必须引用出发日与行日期相同的事实；原生 `write` 与 `present` 在文档产物落盘或交付前强制核对，轮次截止后同样生效。 |
 | 时间 | host-local 时间锚、真实日历校验、IANA 时区和 DST 歧义检查由确定性代码执行；模型不做日期算术。 |
 | 用户会话 | 浏览器检索保持只读、按站点授权、受节律限制且可审计；登录在外部站点完成，票据值不进入模型上下文。 |
 | 状态 | tenant-scoped SQLite 账本是权威；投影可重建，幂等、待处理写入和 durable 工单终态显式化。 |
@@ -191,7 +191,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 16 | 双形态架构冻结（本地+Web）：**一套账本语义，两种宿主绑定**；`tenant_id` 一等字段；append/read/fold/rebuild 全部以当前 ledger owner 为作用域；同步=事件复制非状态翻译 | [§8.16](adr-expansions.zh-CN.md#816-双形态架构冻结) | 永不复审（双形态是产品形态基座）；同步协议与 claim/CAS 实装按触发器后置（**触发已满足 2026-10-21**，#674：两者激活，见表下说明）；历史 local 事件不可无证据自动反推租户 | `state-ledger.ts` schema v2；run-all §28 双形态断言 |
 | 17 | 预订 saga 状态机具名化（issue #17 采纳，2026-08-29） | [§8.17](adr-expansions.zh-CN.md#817-预订-saga-状态机具名化) | M5 拍板 WriteGate 时复审（启封增量的 schema CHECK/seam 词汇/L4 自动类）；若出现需要并行多写者的预订流，复审 keyed 单写者形态——**已触发 2026-10-21，2026-10-28 复审：成立**（#674，见表下说明） | `ts/src/booking-saga.ts`；`docs/design/booking-saga-fsm.md`；run-all §36 |
 | 18 | 效应解译器 effect_interpreter.v1（issue #16 采纳，2026-08-29） | [§8.18](adr-expansions.zh-CN.md#818-效应解译器-effect_interpreterv1) | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界；写效应（预订/支付）入注册表时必须走 booking_saga_fsm.v1 边表（M5 Entry） | `ts/capabilities/effect.ts` `resilience.ts`；`docs/design/effect-interpreter.md`；run-all §37 |
-| 19 | 可下单事实单一数据源 + 产物事实闸（issue #46,2026-08-30） | [§8.19](adr-expansions.zh-CN.md#819-可下单事实单一数据源--产物事实闸) | 出现第二类需闸产物（如酒店直订）时复审覆盖面；政策实时源接入后复审政策事实生产端；根治方向=产物只由渲染原语生成（结构化→markdown 单向），反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`；`data/airline-airports.json`；run-all §39；smoke §16 |
+| 19 | 可下单事实单一数据源 + 产物事实闸（issue #46,2026-08-30） | [§8.19](adr-expansions.zh-CN.md#819-可下单事实单一数据源--产物事实闸) | 出现第二类需闸产物（如酒店直订）时复审覆盖面；政策实时源接入后复审政策事实生产端；根治方向=产物只由渲染原语生成（结构化→markdown 单向），反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts` `ts/src/evidence-date-binding.ts` `ts/src/evidence-date-guard.ts`；`data/airline-airports.json`；run-all §39、§48b；smoke §16 |
 | 20 | 价表 provider-aware v2 + 价格漂移长机制（issue #49,2026-08-30）：封存价表 `gotry_llm_price_table_v2`（DeepSeek tiered + MiniMax flat，未知模型 fail-closed 不猜价）+ 四 provider 漂移监测，**永不自动 apply 价格**（调整走 PR + 人 review） | 发版时人工核价（滞后）/自动 apply（拒绝：官方 down 5% 曾被误认为我方 bug） | 监测误报成系统性问题、或价格源形态变化时复审 | `ts/data/llm-price-table.json`；`ts/scripts/price-drift-watch.ts`；run-all §41/§42 |
 | 21 | 扩展分发三通道（issue #21 分发通道，2026-08-30；商店轨 2026-09-02 上架） | [§8.21](adr-expansions.zh-CN.md#821-扩展分发三通道) | ~~商店过审后复审 wizard 步骤~~（已触发：wizard 退化为离线健康探活等待；安装=浏览器的事、渲染=dsh UI 的事，§3.3 职责返交落地）；GitHub 不可达地区常态化时复审镜像默认值；出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`；`scripts/package-extension.mjs`；run-all §43；`docs/ops/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**，不是实时航班源（issue #67） | [§8.22](adr-expansions.zh-CN.md#822-static-golden--可审计-comparator) | 出现可免私有凭证、许可清晰且稳定的官方 flight API，或 hbcli 发布 flight 合同时复审其为新 provider；static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`；`ts/data/sf-static-routes.json`；run-all §44 |

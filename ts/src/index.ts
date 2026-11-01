@@ -42,7 +42,7 @@ import {
 } from './session-zone-wiring.ts'
 import { isValidHomeCityPreference, resolveDefaultOrigin, type MergedProfile, type ProfilePatch } from './memory-capture.ts'
 import { applyPlanningWindow } from './loop.ts'
-import { buildTimeAnchor, type PlanningWindow } from './time-anchor.ts'
+import { buildTimeAnchor, ymd, type PlanningWindow } from './time-anchor.ts'
 import { evaluateHotelStayDates } from './hotel-date-gate.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
 // D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
@@ -66,6 +66,8 @@ import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromHotel, factsFromSession, factsFromSessionTrain } from './bookable-facts.ts'
 import { hasRecognizedAvailableSeat } from '../capabilities/session/adapters/rail-12306.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
+import { checkEvidenceDateBinding, htmlToGateText } from './evidence-date-binding.ts'
+import { installEvidenceDateGuard } from './evidence-date-guard.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { startTurnHandoffJob } from './turn-handoff-job.ts'
 import { noteChannelVerdict, recordChannelEvent, readLatestChannelEvents } from '../capabilities/channel-health.ts'
@@ -656,6 +658,10 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // issue #194 A-轨道 guard 先注册；生产 Cordis 的 prepend 保证它在授权闸
   // 前运行，smoke 的轻量事件采集器也继续把授权闸作为最后一个观察项。
   installSubagentJobIdGuard(ctx)
+  // 证据日期绑定闸(rc.33 行程实测 2026-11-01):gotry_fact_gate 是模型可以不调的工具——那一轮
+  // 过了软截止就没调,两条红眼航班带 ✅ 写到了从未查询过的日期上。write/present 前强制核对
+  // 标 ✅/实证、带事实锚点或写明票价的航班行与同日事实的绑定(present 截止后仍可调用,截止模式同样生效)。
+  installEvidenceDateGuard(ctx, { stateRoot: config.stateRoot ?? '.', loadMap: loadAirlineAirportMap, clock })
   const ctxOn = (ctx as unknown as { on?: unknown }).on
   if (typeof ctxOn === 'function') {
     const gate = createConsentGate({
@@ -2931,7 +2937,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       if (!markdown && q.path) {
         const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), path: q.path })
         if (!r.ok) return JSON.parse(JSON.stringify({ ok: false, summary: `产物读取失败:${String((r as { error?: string }).error ?? '')}` })) as Record<string, never>
-        markdown = r.content
+        markdown = /\.html?$/i.test(q.path) ? htmlToGateText(r.content) : r.content
       }
       if (!markdown) return JSON.parse(JSON.stringify({ ok: false, summary: '需要 markdown(产物全文)或 path(产物路径)' })) as Record<string, never>
       const itinerary = q.itinerary as import('./bookable-facts.ts').ItineraryFacts | undefined
@@ -2941,7 +2947,16 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       // itinerary.trip_start 是权威源(同次闸同时驱动 itineraryInvariants),不再
       // 额外要求调用方传 opts.tripStart;空 itinerary/无 trip_start 即无提醒。
       const tripStart = typeof itinerary?.trip_start === 'string' ? itinerary.trip_start : undefined
-      const report = gateArtifact(markdown, registry, avMap, { trip_year: q.tripYear, itinerary, tripStart })
+      const kernel = gateArtifact(markdown, registry, avMap, { trip_year: q.tripYear, itinerary, tripStart })
+      // 证据日期绑定(rc.33):write/present 前强制执行的同一规则并入报告;无 tripYear 时「12/1」按宿主今天取最近的一次
+      const dateBinding = checkEvidenceDateBinding(markdown, registry, avMap, { trip_year: q.tripYear, today: ymd(clock()) })
+      const violations = [...kernel.violations, ...dateBinding]
+      const report = {
+        ...kernel,
+        verdict: violations.length > 0 ? 'blocked' as const : 'pass' as const,
+        violations,
+        presentation: violations.length > 0 ? 'verified_label_forbidden' as const : 'verified_itinerary_allowed' as const,
+      }
       const lines = report.violations.slice(0, 20).map(v => `  L${v.line} [${v.kind}] ${v.detail}`)
       const summary = report.verdict === 'pass'
         ? `事实闸 PASS:${report.traceable}/${report.claims_checked} 可下单 claim 全部回溯到 exact-date 工具结果(query_id 可重放)——可宣称「已验证方案」。`
