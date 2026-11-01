@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolRuntime, defineTool } from '@deepseek-ai/dsh-tools'
 import { createScope } from '@deepseek-ai/dsh-scope'
+import { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { approvalFromContext, createConsentGate } from '../capabilities/session-consent.ts'
 import {
   installTurnDeadline,
   TURN_DEADLINE_EXHAUSTED,
@@ -354,4 +356,235 @@ for (const overflow of [false, true]) {
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
-console.log('agent turn deadline tests: OK (routing→converge/handoff exits, ticket persistence, plugin-message discipline, lifecycle)')
+// Turn 8 of the founder's session on published rc.33 (2026-11-01): a research
+// call crossed the deadline, both corrected artifacts were refused, and present
+// then republished the turn-7 files, which the final answer called rewritten.
+// One final deliverable write still runs; present never republishes a path
+// whose update this turn was refused.
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-stale-present-'))
+  mkdirSync(join(root, 'artifacts'))
+  const turn7 = new Date('2026-11-01T05:56:34.000Z')
+  for (const [name, text] of [['plan.md', '# R1'], ['plan.html', '<h1>R1</h1>']]) {
+    writeFileSync(join(root, 'artifacts', name), text)
+    utimesSync(join(root, 'artifacts', name), turn7, turn7)
+  }
+  const hooks = new Map<string, any>()
+  let started = 0
+  let time = 0
+  const agent = { id: 'stale', ctx: { tools: { restrict: () => () => {} } },
+    session: { id: 'stale', header: { cwd: root }, snapshotEvents: () => [] } }
+  installTurnDeadline({ tools: { schemas: () => [] }, on: (name: string, hook: unknown) => hooks.set(name, hook) } as unknown as Context,
+    { stateRoot: root, now: () => time, startHandoff: async ticket => { started++; return { ...ticket, status: 'running', jobId: 'gotry-planning-1' } } })
+  const bodies: string[] = []
+  const call = (name: string, args: Record<string, unknown>, body: () => Result = success): Promise<Result> =>
+    hooks.get('tools/execute')({ token: Symbol(name), callId: `call-${bodies.length}-${name}`, name, agent, arguments: args },
+      async () => { bodies.push(name); return body() })
+  try {
+    hooks.get('session/event')({ id: agent.id }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: deepMessageForDelivery() }] } })
+    time = 240_001
+    const crossing = await call('gotry_flyai_search', { kind: 'flight' })
+    assert.equal(crossing.error?.info?.code, TURN_DEADLINE_HANDOFF)
+    const mdWrite = await call('write', { file_path: 'artifacts/plan.md', content: '# R2' },
+      () => { writeFileSync(join(root, 'artifacts', 'plan.md'), '# R2'); return success() })
+    const htmlWrite = await call('write', { file_path: 'artifacts/plan.html', content: '<h1>R2</h1>' },
+      () => { writeFileSync(join(root, 'artifacts', 'plan.html'), '<h1>R2</h1>'); return success() })
+    const both = await call('present', { files: [{ path: 'artifacts/plan.html' }, { path: 'artifacts/plan.md' }] })
+    const refusal = both.content.map(block => block.text ?? '').join('\n')
+    assert.equal(both.isError, true, 'present must not republish a file whose update this turn was refused')
+    assert.equal(both.error?.info?.code, 'TURN_DEADLINE_STALE_DELIVERABLE')
+    assert.ok(!bodies.includes('present'), 'the stale delivery never reaches the present body')
+    assert.match(refusal, /artifacts\/plan\.html was not updated in this turn/)
+    assert.match(refusal, /2026-11-01T05:56:34\.000Z/, 'the refusal names the earlier version by its modification time')
+    assert.doesNotMatch(refusal, /plan\.md was not/, 'the file written this turn is not reported as stale')
+    assert.equal(mdWrite.isError, false, 'one final deliverable write still runs after the deadline')
+    assert.equal(readFileSync(join(root, 'artifacts', 'plan.md'), 'utf8'), '# R2')
+    assert.equal(htmlWrite.isError, true, 'a second write after the deadline is refused')
+    assert.match(htmlWrite.content[0]?.text ?? '', /artifacts\/plan\.html was not written/)
+    assert.equal(readFileSync(join(root, 'artifacts', 'plan.html'), 'utf8'), '<h1>R1</h1>')
+    const fresh = await call('present', { files: [{ path: './artifacts/plan.md' }] })
+    assert.equal(fresh.isError, false, 'the artifact written this turn can still be presented')
+    assert.equal(started, 1, 'one tracked planner')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}
+
+// The converge exit has the same final-only surface. The deadline-crossing write
+// is the one final write; refused edits count, absolute and relative spellings
+// name the same file, and a later successful write clears the mark.
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-stale-converge-'))
+  writeFileSync(join(root, 'notes.md'), 'old notes')
+  const hooks = new Map<string, any>()
+  let time = 0
+  const agent = { id: 'stale-converge', ctx: { tools: { restrict: () => () => {} } },
+    session: { id: 'stale-converge', header: { cwd: root }, snapshotEvents: () => [] } }
+  installTurnDeadline({ tools: { schemas: () => [] }, on: (name: string, hook: unknown) => hooks.set(name, hook) } as unknown as Context,
+    { now: () => time, fixedPolicy: { softMs: 5, hardMs: 10, exit: 'converge' } })
+  const call = (name: string, args: Record<string, unknown>, body: () => Result = success): Promise<Result> =>
+    hooks.get('tools/execute')({ token: Symbol(name), name, agent, arguments: args }, async () => body())
+  const userTurn = () => hooks.get('session/event')({ id: agent.id }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'summarize my notes' }] } })
+  try {
+    userTurn()
+    time = 11
+    const answer = await call('write', { file_path: 'answer.md', content: 'final' }, () => { writeFileSync(join(root, 'answer.md'), 'final'); return success() })
+    assert.equal(answer.isError, false, 'the deadline-crossing write is the final write')
+    const edit = await call('edit', { file_path: join(root, 'notes.md'), old_string: 'old', new_string: 'new' })
+    assert.equal(edit.error?.info?.code, TURN_DEADLINE_EXHAUSTED)
+    const stale = await call('present', { files: [{ path: 'notes.md' }] })
+    assert.equal(stale.error?.info?.code, 'TURN_DEADLINE_STALE_DELIVERABLE', 'a refused edit makes present refuse the same file')
+    const missing = await call('write', { file_path: 'other.md', content: 'x' })
+    assert.equal(missing.isError, true)
+    const absent = await call('present', { files: [{ path: join(root, 'other.md') }] })
+    assert.match(absent.content[0]?.text ?? '', /other\.md was not written in this turn[^]*no file exists/)
+    assert.equal((await call('present', { files: [{ path: 'answer.md' }] })).isError, false)
+    // A new user message opens a new budget; a successful write there clears the mark.
+    userTurn()
+    assert.equal((await call('write', { file_path: 'notes.md', content: 'new notes' })).isError, false)
+    assert.equal((await call('present', { files: [{ path: 'notes.md' }] })).isError, false)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}
+
+// Real DSH pipeline with GoTry's consent gate, the approval service and a
+// deterministic clock. Sessions publish appended events synchronously, as
+// dsh-session's Session.append does; the answerer stands in for the user.
+async function withApprovalPipeline(
+  run: (pipeline: {
+    root: string
+    events: Array<{ type: string; data: unknown }>
+    advance: (ms: number) => void
+    search: (callId: string) => Promise<Result>
+    searches: () => number
+    asked: () => Promise<(outcome: 'allowed-once' | 'rejected') => void>
+    started: () => number
+  }) => Promise<void>,
+): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'gotry-approval-wait-'))
+  const runtimeCtx = new Context()
+  runtimeCtx.provide('systemPrompt', { tools() {}, context() {}, getContextOrder: () => 0 })
+  const tools = new ToolRuntime(runtimeCtx)
+  new ApprovalService(runtimeCtx, { policy: 'ask' })
+  let time = 0
+  let searches = 0
+  let started = 0
+  const events: Array<{ type: string; seq: number; time: number; data: unknown }> = []
+  const session = {
+    id: 'approval-wait', header: { cwd: root },
+    get seq() { return events.length },
+    eventAt: (seq: number) => events[seq],
+    snapshotEvents: () => [...events],
+    append(type: string, data: unknown) {
+      const event = { type, seq: events.length, time, data }
+      events.push(event)
+      runtimeCtx.emit('session/event', session as never, event as never)
+      return event
+    },
+  }
+  const mutableAgent = { id: 'approval-wait', ctx: runtimeCtx, session }
+  const agent = mutableAgent as unknown as Agent
+  const scope = createScope(runtimeCtx, agent)
+  mutableAgent.ctx = scope.ctx
+  installTurnDeadline(runtimeCtx, { stateRoot: root, now: () => time,
+    startHandoff: async ticket => { started++; return { ...ticket, status: 'running', jobId: 'gotry-planning-1' } } })
+  runtimeCtx.on('tools/pre-execute', createConsentGate({ access: () => 'ask', approval: approvalFromContext(runtimeCtx) }) as never)
+  const answerers: Array<(decide: (outcome: 'allowed-once' | 'rejected') => void) => void> = []
+  runtimeCtx.on('approval/request', () => new Promise(resolve => answerers.shift()?.(resolve)))
+  tools.register(defineTool({
+    name: 'gotry_session_search', description: 'Read-only account-session search',
+    parameters: { from: { type: 'string' }, to: { type: 'string' }, date: { type: 'string' }, kind: { type: 'string' }, ui: { type: 'string' } },
+    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: 'flights' }] },
+    async execute() { searches++; return { ok: true } },
+  }))
+  try {
+    session.append('turn/start', { turn: 8 })
+    session.append('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: deepMessageForDelivery() }] })
+    await run({
+      root, events,
+      advance: ms => { time += ms },
+      search: callId => tools.execute({ name: 'gotry_session_search', agent, callId: callId as never, signal: new AbortController().signal,
+        arguments: { from: '迪拜', to: '香港', date: '2026-12-01', kind: 'flight', ui: 'gui' } }) as Promise<Result>,
+      searches: () => searches,
+      asked: () => new Promise(resolve => answerers.push(resolve)),
+      started: () => started,
+    })
+  } finally {
+    await scope.dispose()
+    await runtimeCtx.fiber.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+// Turn 8 also waited 64 minutes for the user to approve gotry_session_search
+// (10:00:53 → 11:05:06). DSH awaits that decision in tools/pre-execute
+// (ToolRuntime.prepareExecution → consent gate → ApprovalService.request),
+// before the tools/execute deadline gate, so the hour was charged to the turn
+// and the approved call came back TURN_DEADLINE_HANDOFF without running.
+await withApprovalPipeline(async ({ root, events, advance, search, searches, asked, started }) => {
+  advance(27_000)
+  const decision = asked()
+  const approved = search('call_00_3gES')
+  const decide = await decision
+  advance(64 * 60_000 + 13_000)
+  decide('allowed-once')
+  const result = await approved
+  assert.deepEqual(events.filter(event => event.type.startsWith('approval/')).map(event => event.type), ['approval/asked', 'approval/decided'])
+  assert.equal(searches(), 1, `the call the user approved runs: ${JSON.stringify(result)}`)
+  assert.equal(result.isError, false)
+  assert.equal(existsSync(join(root, 'gotry-state', 'turn-handoffs')), false, "the user's decision time is not turn time")
+  // The turn's own time still binds: 27 s were spent before the wait.
+  advance(212_000)
+  assert.equal((await search('call_in_budget')).isError, false, 'the budget left before the ask is intact')
+  advance(2_000)
+  const late = await search('call_late')
+  assert.match(JSON.stringify(late), /TURN_DEADLINE_HANDOFF/, 'the deadline still fires on turn time')
+  assert.equal(searches(), 2)
+  assert.equal(started(), 1)
+})
+
+// An ask that starts after the budget is spent still counts: the approved call
+// runs once, and the handoff follows it instead of discarding the approval.
+await withApprovalPipeline(async ({ root, advance, search, searches, asked, started }) => {
+  advance(241_000)
+  const decision = asked()
+  const approved = search('call_after_deadline')
+  const decide = await decision
+  advance(30_000)
+  decide('allowed-once')
+  const result = await approved
+  assert.equal(searches(), 1, `an approved call is never discarded: ${JSON.stringify(result)}`)
+  assert.equal(result.isError, false, 'its real result is kept')
+  assert.match(JSON.stringify(result.additionalContexts), /TURN_DEADLINE_HANDOFF[^]*gotry-planning-1/, 'handoff guidance follows the approved call')
+  assert.equal(readdirSync(join(root, 'gotry-state', 'turn-handoffs')).filter(name => name.endsWith('.json')).length, 1)
+  // The site grant now covers the session; the next search is not approved anew.
+  const repeated = await search('call_repeat')
+  assert.match(JSON.stringify(repeated), /TURN_DEADLINE_HANDOFF/)
+  assert.equal(searches(), 1, 'only the approved call gets the exception')
+  assert.equal(started(), 1)
+})
+
+// Overlapping approvals pause the budget once, not once per request.
+{
+  const hooks = new Map<string, any>()
+  let time = 0
+  const agent = { id: 'overlap', ctx: { tools: { restrict: () => () => {} } }, session: { id: 'overlap', header: { cwd: tmpdir() }, snapshotEvents: () => [] } }
+  installTurnDeadline({ tools: { schemas: () => [] }, on: (name: string, hook: unknown) => hooks.set(name, hook) } as unknown as Context,
+    { now: () => time, fixedPolicy: { softMs: 100_000, hardMs: 240_000, exit: 'converge' } })
+  const event = (type: string, data: unknown) => hooks.get('session/event')({ id: agent.id }, { type, data })
+  const call = async () => (await hooks.get('tools/execute')({ token: Symbol('overlap'), name: 'search', agent }, async () => success()) as Result)
+  event('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'plan a weekend' }] })
+  time = 10_000
+  event('approval/asked', { id: 'a1', toolName: 'search', callId: 'c1' })
+  time = 20_000
+  event('approval/asked', { id: 'a2', toolName: 'search', callId: 'c2' })
+  time = 500_000
+  assert.equal((await call()).isError, false, 'time with an approval open is not charged')
+  time = 1_000_000
+  event('approval/decided', { id: 'a1', outcome: 'rejected' })
+  time = 2_000_000
+  event('approval/decided', { id: 'a2', outcome: 'rejected' })
+  time = 2_000_000 + 229_000
+  assert.equal((await call()).isError, false, '10 s before the wait + 229 s after it is within 240 s')
+  time = 2_000_000 + 231_000
+  assert.equal((await call()).error?.info?.code, TURN_DEADLINE_EXHAUSTED, 'the overlapped wait is excluded once')
+}
+
+console.log('agent turn deadline tests: OK (routing→converge/handoff exits, ticket persistence, plugin-message discipline, lifecycle, final write and stale presents, user approval waits)')
