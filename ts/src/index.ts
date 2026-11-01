@@ -302,7 +302,9 @@ function flyaiToolQuery(args: FlyaiToolArgs, signal?: AbortSignal): { query?: Fl
   putNumber(query, 'maxPrice', args, 'maxPrice')
   putText(query, 'sortType', args, 'sortType')
 
-  putText(query, 'destName', args, 'destName', 'to')
+  // destination is the flight field name the model reuses for hotels (2026-11-01:
+  // rejected, it planned without hotels); last, so destName/to callers keep precedence.
+  putText(query, 'destName', args, 'destName', 'to', 'destination')
   putText(query, 'checkInDate', args, 'checkIn', 'checkInDate')
   putText(query, 'checkOutDate', args, 'checkOut', 'checkOutDate')
   putText(query, 'keyWords', args, 'keyWords')
@@ -365,7 +367,7 @@ function flyaiToolQuery(args: FlyaiToolArgs, signal?: AbortSignal): { query?: Fl
     }
   }
   if (kind === 'hotel' || kind === 'marriott-hotel') {
-    if (!query.destName?.trim()) return { error: `kind=${kind} 需要 to/destName（目的地）` }
+    if (!query.destName?.trim()) return { error: `kind=${kind} 需要 destination/to/destName（目的地）` }
     const hasIn = Boolean(query.checkInDate)
     const hasOut = Boolean(query.checkOutDate)
     if (hasIn !== hasOut) return { error: 'checkIn/checkOut 必须成对' }
@@ -647,7 +649,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   installProcessGuards(config.stateRoot ?? '.', { uncaughtException: 'gotry-tools', unhandledRejection: 'gotry-tools' })
 
   // 账号会话授权闸(RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码;v2 每会话一次):
-  // 会话面工具动用用户本人登录态,**每会话每站点首次调用**弹 dsh 原生审批卡——
+  // 会话面工具动用用户本人登录态,**每会话每站点首次调用**弹 dsh 原生审批卡(GUI 车道单独一桶)——
   // allowed-once 记入会话 granted 集,后续同站调用免弹;用户拒绝 = 本会话吊销
   // (denied 集,不再弹卡也不再执行——拒绝是裁决,不反复骚扰);无审批通道
   // (headless 无用户在场)一律 fail-closed 拒绝。sessionAccess: ask(默认)|allow|off。
@@ -1708,7 +1710,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     description: routed('gotry_flyai_search',
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
       + 'kind="flight"|"train": from/origin is required; to/destination and date/dateStart+dateEnd are optional for official exploration, and exact-date results split 直达/中转. '
-      + 'kind="hotel"|"marriott-hotel": to/destName=目的地中文, checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底). '
+      + 'kind="hotel"|"marriott-hotel": destination/to/destName=目的地中文, checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底). '
       + 'kind="poi": cityName=城市; kind="keyword"|"ai": query; kind="marriott-package": keyword. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
       + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
@@ -1722,7 +1724,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       to: { type: 'string', description: '兼容字段：机/火到达城市或酒店目的地；等价于 destination/destName' },
       date: { type: 'string', description: '兼容字段：机/火 exact-date YYYY-MM-DD；等价于 depDate' },
       origin: { type: 'string', description: '机/火出发城市或机场' },
-      destination: { type: 'string', description: '机/火到达城市或机场' },
+      destination: { type: 'string', description: '机/火到达城市或机场；kind=hotel/marriott-hotel 时为酒店目的地，等价于 destName' },
       depDate: { type: 'string', description: '机/火 exact-date YYYY-MM-DD' },
       dateStart: { type: 'string', description: '机/火日期范围起点 YYYY-MM-DD，与 dateEnd 成对' },
       dateEnd: { type: 'string', description: '机/火日期范围终点 YYYY-MM-DD，与 dateStart 成对' },
@@ -1740,7 +1742,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       totalDurationHour: { type: 'number', description: '机票总时长上限（小时）' },
       maxPrice: { type: 'number', description: '最高价格（CNY）' },
       sortType: { type: 'string', description: '机/火排序或万豪套餐 price_asc/price_desc' },
-      destName: { type: 'string', description: '酒店/万豪酒店目的地' },
+      destName: { type: 'string', description: '酒店/万豪酒店目的地；等价于 to/destination' },
       checkIn: { type: 'string', description: '兼容字段：酒店入住日期 YYYY-MM-DD' },
       checkOut: { type: 'string', description: '兼容字段：酒店退房日期 YYYY-MM-DD' },
       checkInDate: { type: 'string', description: '酒店入住日期 YYYY-MM-DD' },
@@ -1864,7 +1866,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     name: 'gotry_session_search',
     description: routed('gotry_session_search',
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
-      + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
+      + 'Consent gate: the FIRST call per site and lane (bridge vs ui="gui") in a session asks the user via the runtime approval card; once granted it holds for that site and lane for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: Stai Travel Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'kind="flight": from/to city or airport names (Chinese/English) + date YYYY-MM-DD; unknown names resolve from supplier metadata, ambiguous names require confirmation; optional fromCityCode/toCityCode are explicit Ctrip three-letter codes — sniffs the site search API for structured options. '
       + 'ui?="bridge" (default; the user\'s own logged-in session, real member prices) | "gui" (gotry opens its OWN isolated anonymous Chrome window and drives the Ctrip PC search form — roundtrip via backDate? and ANY city by construction: the site\'s own autocomplete resolves cities; anonymous public prices, NOT logged-in prices; verdicts carry anonymous=true; result-binding iteration tracked in #661). Evidence [会话:ctrip-flight@ts] / [会话:ctrip-flight-gui@ts]. '
@@ -2044,7 +2046,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       })
       if (!itp.result) return declinedObservation('SESSION_FLIGHT_SEARCH', itp.trace)
       const r = itp.result
-      await noteChannel('session:ctrip-flight', r.verdict)
+      // GUI 车道是注册表里的独立通道:失败只记它自己,改道时也只排除它自己(桥车道照常可荐)
+      const flightChannel = q.ui === 'gui' ? 'session:ctrip-flight-gui' : 'session:ctrip-flight'
+      await noteChannel(flightChannel, r.verdict)
       // issue #46 事实落账(ADR-19):会话面 exact-date 结论同样进事实注册表(独立 source 并列标注)
       const avMapS = await loadAirlineAirportMap()
       await appendFacts(config.stateRoot ?? '.', factsFromSession({ origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMapS?.city_alias))
@@ -2058,7 +2062,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({
         ...r, summary,
-        ...(r.verdict !== 'hit' ? await routingField('search-flight', 'session:ctrip-flight') : {}),
+        ...(r.verdict !== 'hit' ? await routingField('search-flight', flightChannel) : {}),
       })) as Record<string, never>
     },
     presentCall: args => {

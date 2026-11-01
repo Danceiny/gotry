@@ -21,6 +21,11 @@
  * 必须按与 execute 同源的 interpretArgs 选 site(包装 query 优先);授权与拒绝均按 site
  * 分桶。缺省 kind 保持工具合同的 flight 默认值;unknown/malformed kind 失败关闭(deny,
  * 不扩权),防止新站点未登记就放行。train 虽是 12306 公开查询面,仍经过本闸的 off/ask/allow。
+ *
+ * 车道绑定(2026-11-01 rc.33 实测):flight/hotel 的 ui="gui" 不用你本人的浏览器会话,而是
+ * gotry 自开的隔离匿名窗口(临时 profile,检索结束即删)。卡面按车道如实措辞,授权与拒绝按
+ * site×车道分桶——GUI 卡措辞更轻,它的批准绝不放行登录态桥车道;桥车道的批准也不放行开窗。
+ * 车道选择与 execute 同源(interpretArgs,wrapped query 优先);train/dida 无 GUI 车道,ui 被忽略。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -119,11 +124,31 @@ export function resolveSessionSearchKind(args: unknown): SessionSearchKindSelect
   return { ok: true, kind: kind as SessionSearchKind }
 }
 
+/** bridge=你本人浏览器会话(扩展桥,默认);gui=gotry 自开的隔离匿名窗口(仅 flight/hotel)。 */
+export type SessionLane = 'bridge' | 'gui'
+const GUI_LANE_KINDS: ReadonlySet<SessionSearchKind> = new Set(['flight', 'hotel'])
+
+/** 与 execute 同源选车道:wrapped query 优先;只有 ui === 'gui' 且 kind 有 GUI 车道才算 gui。 */
+function laneOf(args: unknown, kind: SessionSearchKind): { lane: SessionLane; interactiveLogin: boolean } {
+  if (!GUI_LANE_KINDS.has(kind) || !args || typeof args !== 'object' || Array.isArray(args)) return { lane: 'bridge', interactiveLogin: false }
+  const selected = interpretArgs<{ ui?: unknown; interactiveLogin?: unknown }>(args as { query?: unknown } & Record<string, unknown>)
+  return selected?.ui === 'gui'
+    ? { lane: 'gui', interactiveLogin: Boolean(selected.interactiveLogin) }
+    : { lane: 'bridge', interactiveLogin: false }
+}
+
+export interface SiteResolution {
+  site: string
+  lane: SessionLane
+  /** 仅 gui:登录墙命中时窗口停在官方登录页等用户本人登录(与 execute 同为真值判定) */
+  interactiveLogin: boolean
+}
+
 /**
- * 解析 site(#308):对复合工具(缺省 kind=flight,未知/malformed kind → fail-closed);对未在
- * SITE_FOR_KIND 登记的工具走原 ACCOUNT_TOOLS 表保持兼容。无 site → 放行(非账号面工具)。
+ * 解析 site(#308)与车道:对复合工具(缺省 kind=flight,未知/malformed kind → fail-closed);对未在
+ * SITE_FOR_KIND 登记的工具走原 ACCOUNT_TOOLS 表保持兼容(桥车道)。无 site → 放行(非账号面工具)。
  */
-export function resolveSiteForExec(exec: ConsentExec): { site: string } | { failClosed: true; reason: string } | null {
+export function resolveSiteForExec(exec: ConsentExec): SiteResolution | { failClosed: true; reason: string } | null {
   const name = exec.name
   if (!name) return null
   const map = SITE_FOR_KIND[name]
@@ -132,17 +157,35 @@ export function resolveSiteForExec(exec: ConsentExec): { site: string } | { fail
     if (!selected.ok) return { failClosed: true, reason: selected.reason }
     const site = map[selected.kind]
     if (!site) return { failClosed: true, reason: `工具 ${name} 的 kind=${selected.kind} 未登记站点;失败关闭` }
-    return { site }
+    return { site, ...laneOf(exec.arguments, selected.kind) }
   }
   const site = ACCOUNT_TOOLS[name]
   if (!site) return null
-  return { site }
+  return { site, lane: 'bridge', interactiveLogin: false }
 }
 
-function reasonFor(toolName: string, site: string): string {
+/** 授权桶:桥车道沿用 site 本身(既有会话内授权不变),GUI 车道单独一桶 */
+function bucketOf({ site, lane }: SiteResolution): string {
+  return lane === 'gui' ? `${site}#gui` : site
+}
+
+/** 拒绝提示里的检索面名称(桥车道措辞不变) */
+function surfaceOf({ site, lane }: SiteResolution): string {
+  return `「${SITE_LABEL[site] ?? site}」的${lane === 'gui' ? ' GUI 车道（隔离匿名窗口）检索' : '账号会话检索'}`
+}
+
+function reasonFor(toolName: string, { site, lane, interactiveLogin }: SiteResolution): string {
+  const scope = '本次批准仅在本会话内有效，会话结束即失效，不会跨会话延续。'
+  if (lane === 'gui') {
+    // GUI 车道没有网络层 route 守卫:只读靠动作白名单 + 提交件黑名单 + 只读回包,如实写,不借桥车道的承诺
+    return `工具 ${toolName} 将由 gotry 自开一个隔离的匿名 Chrome 窗口（临时 profile，检索结束即删除；不使用你本人已登录的浏览器会话），在「${SITE_LABEL[site] ?? site}」进行只读检索`
+      + '（动作白名单只填写检索表单并点搜索，下单/支付/提交类按钮一律拒绝，结果只读站点自身的检索回包；遇验证码即停止，agent 永不接触凭证与验证码）；'
+      + (interactiveLogin ? '若命中登录墙，窗口会停在携程官方登录页等你本人登录（gotry 只读 cookie 名字，不经手密码、验证码与 cookie 值）；' : '')
+      + scope
+  }
   return `工具 ${toolName} 将使用你本人已登录的浏览器会话，在「${SITE_LABEL[site] ?? site}」进行只读检索`
     + '（ReadGuard 物理只读：写请求在网络层即中止，agent 永不接触凭证与验证码）；'
-    + '本次批准仅在本会话内有效，会话结束即失效，不会跨会话延续。'
+    + scope
 }
 
 /**
@@ -150,11 +193,11 @@ function reasonFor(toolName: string, site: string): string {
  * 契约:
  *   - 非账号面工具 → next() 放行(零开销);
  *   - off → 拒绝(随时可关);
- *   - 会话内已拒绝 → 拒绝且不弹卡(拒绝=本会话吊销;按 site 分桶,跨站不互授);
+ *   - 会话内已拒绝 → 拒绝且不弹卡(拒绝=本会话吊销;按 site×车道分桶,跨站/跨车道不互授);
  *   - 会话内已批准 / allow 预授权 → 放行;
  *   - 复合工具未知/malformed kind → fail-closed deny(不扩权),缺省 kind=flight;
- *   - 其余 → ApprovalService.request();allowed-once 按 site 入会话 granted;
- *     rejected/cancelled 按 site 入会话 denied(本会话不在请求);
+ *   - 其余 → ApprovalService.request()(卡面按车道措辞);allowed-once 按 site×车道入会话 granted;
+ *     rejected/cancelled 按 site×车道入会话 denied(本会话不在请求);
  *     无审批通道 → deny(fail-closed,headless 无用户 = 无授权)。
  */
 export function createConsentGate(opts: ConsentGateOptions): ConsentGate {
@@ -164,30 +207,31 @@ export function createConsentGate(opts: ConsentGateOptions): ConsentGate {
     const resolved = resolveSiteForExec(exec)
     if (!resolved) return next()
     if ('failClosed' in resolved) return { kind: 'deny', reason: resolved.reason }
-    const { site } = resolved
+    const bucket = bucketOf(resolved)
     if ((opts.access() ?? 'ask') === 'off') {
       return { kind: 'deny', reason: `工具 ${exec.name} 已被配置关闭（sessionAccess=off）。如需重新启用账号会话检索，请到配置中重新开启 sessionAccess。` }
     }
     const state = (exec.agent && store.get(exec.agent)) || undefined
-    if (state?.denied.has(site)) {
-      return { kind: 'deny', reason: `你已在本会话拒绝过「${SITE_LABEL[site] ?? site}」的账号会话检索。为避免反复打扰，本会话不再请求授权，请改用其他工具继续推进。` }
+    if (state?.denied.has(bucket)) {
+      return { kind: 'deny', reason: `你已在本会话拒绝过${surfaceOf(resolved)}。为避免反复打扰，本会话不再请求授权，请改用其他工具继续推进。` }
     }
-    if (state?.granted.has(site) || (opts.access() === 'allow' && exec.agent)) return next()
+    if (state?.granted.has(bucket) || (opts.access() === 'allow' && exec.agent)) return next()
     const approval = opts.approval?.()
-    if (!approval || !exec.agent) return { kind: 'ask', reason: reasonFor(exec.name ?? '', site) }
+    if (!approval || !exec.agent) return { kind: 'ask', reason: reasonFor(exec.name ?? '', resolved) }
     let outcome: string
     try {
-      outcome = await approval.request({ agent: exec.agent, toolName: exec.name ?? '', callId: exec.callId, reason: reasonFor(exec.name ?? '', site) })
+      outcome = await approval.request({ agent: exec.agent, toolName: exec.name ?? '', callId: exec.callId, reason: reasonFor(exec.name ?? '', resolved) })
     } catch {
       outcome = 'unavailable'
     }
     if (outcome === 'allowed-once') {
-      remember(store, exec.agent, site, 'grant')
+      remember(store, exec.agent, bucket, 'grant')
       return next()
     }
     if (outcome === 'rejected' || outcome === 'cancelled') {
-      remember(store, exec.agent, site, 'deny')
-      return { kind: 'deny', reason: `你刚刚拒绝了工具 ${exec.name} 的账号会话授权（本次拒绝仅在本会话内生效）。为避免反复打扰，本会话不再重复请求授权，请改用其他工具继续推进。` }
+      remember(store, exec.agent, bucket, 'deny')
+      const refused = resolved.lane === 'gui' ? ' GUI 车道（隔离匿名窗口）检索授权' : '账号会话授权'
+      return { kind: 'deny', reason: `你刚刚拒绝了工具 ${exec.name} 的${refused}（本次拒绝仅在本会话内生效）。为避免反复打扰，本会话不再重复请求授权，请改用其他工具继续推进。` }
     }
     return { kind: 'deny', reason: `工具 ${exec.name} 需要你授权，但当前没有可用的审批通道。在 headless 一问一答场景下没有审批界面，请改用 web 会话来使用账号会话检索。` }
   }

@@ -60,6 +60,8 @@ export interface ChannelEntry {
   setup?: string
   /** kind 参数面(session 工具三通道同名工具)在 persona 卡里消歧用 */
   hint?: string
+  /** 车道专属 why:同 tier 的通用理由会说错本车道时覆盖(如匿名 GUI 车道不是登录态价) */
+  why?: string
   /** false = 内部自动降级面,不进模型可选路由建议(静态包) */
   routable?: boolean
 }
@@ -98,6 +100,21 @@ export const CHANNELS: readonly ChannelEntry[] = [
     efficiencyRank: 2,
     setup: '一次性装 Stai Travel Bridge 扩展 + 授权卡 + (如需)官网登录',
     hint: 'kind=flight',
+  },
+  {
+    // 同工具同站的另一车道(2026-10-14 落地,rc.32 HKG↔DXB live 实证):不走扩展桥,
+    // 单列一行——setup/why 与桥车道不同,健康态也要分开记(GUI 失败不连坐桥车道)。
+    id: 'session:ctrip-flight-gui',
+    label: '携程·GUI 匿名窗口',
+    tool: 'gotry_session_search',
+    intents: ['search-flight'],
+    quotaClass: 'free-public',
+    evidenceTag: '[会话:ctrip-flight-gui@ts]',
+    tier: 'session',
+    efficiencyRank: 3,
+    setup: '无需装扩展、无需登录：gotry 自开隔离匿名 Chrome 窗口驱动携程 PC 检索表单（需本机已装 Chrome；首次调用仍弹授权卡）',
+    hint: 'kind=flight ui=gui',
+    why: '携程站点自身数据，任意城市（匿名公开价：低价日历/哪天有票，非登录价）',
   },
   {
     id: 'session:ctrip-hotel',
@@ -289,7 +306,7 @@ export function routingAdvice(intent: ChannelIntent, opts: RoutingAdviceOptions 
       tool: c.tool,
       channel: c.id,
       label: c.label,
-      why: TIER_WHY[c.tier],
+      why: c.why ?? TIER_WHY[c.tier],
       ...(c.setup ? { setup: c.setup } : {}),
       ...(c.hint ? { hint: c.hint } : {}),
     }))
