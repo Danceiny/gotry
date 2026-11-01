@@ -581,6 +581,11 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
     if (elapsed > state.policy.softMs) {
       softExecutions.set(exec.token, { agentId, exit: state.policy.exit })
     }
+    // The question tool's body waits for the user's answer: user time too.
+    if (exec.name === 'ask_user_question') {
+      beginWait(agentId, exec.token)
+      return next().finally(() => endWait(agentId, exec.token))
+    }
     // A successful write clears an earlier refusal for the same file.
     if (change && facts.notUpdated.has(change.target)) {
       return next().then(result => {

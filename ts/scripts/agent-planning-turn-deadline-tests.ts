@@ -587,4 +587,38 @@ await withApprovalPipeline(async ({ root, advance, search, searches, asked, star
   assert.equal((await call()).error?.info?.code, TURN_DEADLINE_EXHAUSTED, 'the overlapped wait is excluded once')
 }
 
-console.log('agent turn deadline tests: OK (routing→converge/handoff exits, ticket persistence, plugin-message discipline, lifecycle, final write and stale presents, user approval waits)')
+// Turn 1 of the same session (2026-10-14): ask_user_question waited 107 s for
+// the user's answer (18:40:52 → 18:42:39), and the next search, 19 s later,
+// crossed the 240 s deadline, so the user's answering time ended the turn.
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-question-wait-'))
+  const hooks = new Map<string, any>()
+  let time = 0
+  const agent = { id: 'question', ctx: { tools: { restrict: () => () => {} } }, session: { id: 'question', header: { cwd: root }, snapshotEvents: () => [] } }
+  installTurnDeadline({ tools: { schemas: () => [] }, on: (name: string, hook: unknown) => hooks.set(name, hook) } as unknown as Context,
+    { stateRoot: root, now: () => time, startHandoff: async ticket => ticket })
+  const search = async () => {
+    let ran = false
+    const result: Result = await hooks.get('tools/execute')({ token: Symbol('search'), name: 'gotry_flyai_search', agent }, async () => { ran = true; return success() })
+    return { ran, result }
+  }
+  try {
+    hooks.get('session/event')({ id: agent.id }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: deepMessageForDelivery() }] } })
+    time = 116_000
+    let answer!: () => void
+    const question: Promise<Result> = hooks.get('tools/execute')({ token: Symbol('question'), name: 'ask_user_question', agent },
+      () => new Promise<Result>(resolve => { answer = () => resolve(success()) }))
+    time += 107_000
+    answer()
+    assert.equal((await question).isError, false)
+    time += 19_000
+    const next = await search()
+    assert.equal(next.ran, true, `the user's answering time is not turn time: ${JSON.stringify(next.result)}`)
+    time += 106_000
+    const late = await search()
+    assert.equal(late.ran, false, '116 s + 19 s + 106 s of turn time crosses the 240 s deadline')
+    assert.equal(late.result.error?.info?.code, TURN_DEADLINE_HANDOFF)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}
+
+console.log('agent turn deadline tests: OK (routing→converge/handoff exits, ticket persistence, plugin-message discipline, lifecycle, final write and stale presents, user approval and question waits)')
