@@ -95,5 +95,25 @@ assert.equal(marriottCall?.params.keyWords, '万豪 大理酒店', 'Marriott nam
 assert.equal('hotelBrands' in (marriottCall?.params ?? {}), false)
 assert.equal('hotelName' in (marriottCall?.params ?? {}), false)
 
+// 2026-11-01 rc.33 trip test: the model sent `destination` for a hotel query, was
+// rejected, and planned without hotels. destination is the last hotel alias, so
+// callers that already send destName or to keep their precedence.
+for (const kind of ['hotel', 'marriott-hotel'] as const) {
+  const before = calls.length
+  const aliased: Record<string, unknown> = await search.execute({ kind, destination: '长春' }, { signal })
+  assert.equal(calls.length, before + 1, `${kind} with destination must reach the effect`)
+  assert.equal(aliased.verdict, 'miss')
+  assert.equal(calls.at(-1)?.params.destName, '长春', `${kind} destination must map to destName`)
+}
+await search.execute({ kind: 'hotel', destName: '大理', to: '丽江', destination: '长春' }, { signal })
+assert.equal(calls.at(-1)?.params.destName, '大理', 'destName stays the first hotel destination field')
+await search.execute({ kind: 'hotel', to: '丽江', destination: '长春' }, { signal })
+assert.equal(calls.at(-1)?.params.destName, '丽江', 'to keeps precedence over destination')
+const missingDestination: Record<string, unknown> = await search.execute({ kind: 'hotel' }, { signal })
+assert.match(String(missingDestination.summary), /destination/, 'the missing-destination rejection names destination')
+assert.match(String(search.parameters.properties.destination.description), /酒店/, 'schema: destination documents the hotel alias')
+const hotelClause = String(search.description).split('kind="hotel"|"marriott-hotel":')[1]?.split('kind="poi"')[0] ?? ''
+assert.match(hotelClause, /destination/, 'description: the hotel clause lists destination')
+
 await rm(stateRoot, { recursive: true, force: true })
 console.log('flyai registration contract OK')

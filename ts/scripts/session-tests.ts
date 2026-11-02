@@ -446,6 +446,55 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     const rMalformed = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-malformed', arguments: { kind: 42 } }, next)
     assert(rMalformed.kind === 'deny', 'malformed kind → fail-closed deny(不把异常降成 flight)', rMalformed)
   }
+
+  // I7 车道如实(2026-11-01 rc.33 实测):ui=gui 是 gotry 自开的隔离匿名窗口,不是你本人已登录的会话。
+  //    卡面按车道措辞,授权按 site×车道分桶——措辞更轻的 GUI 卡,其批准绝不放行登录态桥车道。
+  {
+    const bare = createConsentGate({ access: () => 'ask' })
+    const reasonOf = async (args: unknown): Promise<string> => {
+      const d = await bare({ name: 'gotry_session_search', agent: undefined, arguments: args }, next)
+      return d.kind === 'ask' ? String(d.reason ?? '') : `not-ask:${d.kind}`
+    }
+    const bridgeReason = await reasonOf({ kind: 'flight' })
+    assert(/你本人已登录的浏览器会话/.test(bridgeReason) && /ReadGuard/.test(bridgeReason) && /只读检索/.test(bridgeReason), '桥车道卡面不变(登录态会话 + ReadGuard 物理只读)', bridgeReason)
+    for (const [args, site] of [
+      [{ kind: 'flight', ui: 'gui' }, '携程机票'],
+      [{ kind: 'hotel', ui: 'gui' }, '携程酒店'],
+      [{ query: { kind: 'flight', ui: 'gui' }, ui: 'bridge' }, '携程机票'],
+    ] as const) {
+      const gui = await reasonOf(args)
+      assert(!/将使用你本人已登录/.test(gui) && /不使用你本人已登录的浏览器会话/.test(gui), 'GUI 车道卡面不声称、并明示不使用你本人已登录的会话', { args, gui })
+      assert(/隔离/.test(gui) && /匿名/.test(gui) && gui.includes(site), 'GUI 车道卡面:隔离匿名窗口 + 站点(wrapped query 优先,与 execute 同源)', { args, gui })
+      assert(/只读检索/.test(gui) && /永不接触凭证与验证码/.test(gui) && /仅在本会话内有效/.test(gui), 'GUI 车道只读保证与会话时效措辞不弱于桥车道', { args, gui })
+      assert(!/网络层/.test(gui), 'GUI 车道没有网络层守卫,卡面不借用桥车道的网络层承诺', { args, gui })
+    }
+    assert(/你本人已登录的浏览器会话/.test(await reasonOf({ kind: 'train', ui: 'gui' })), 'train 没有 GUI 车道(execute 忽略 ui)→ 桥车道卡面')
+    assert(/官方登录页/.test(await reasonOf({ kind: 'flight', ui: 'gui', interactiveLogin: true })), 'interactiveLogin:卡面说明窗口会停在官方登录页等你本人登录')
+
+    let requests = 0
+    const seam: ApprovalSeam = { request: async () => { requests += 1; return 'allowed-once' } }
+    const gate = createConsentGate({ access: () => 'ask', approval: () => seam })
+    const call = (agent: object, args: unknown) => gate({ name: 'gotry_session_search', agent, callId: 'lane', arguments: args }, next)
+    const guiFirst = { id: 'agent-gui-first' } as unknown as object
+    assert((await call(guiFirst, { kind: 'flight', ui: 'gui' })).kind === 'allow' && requests === 1, 'GUI 首调弹卡一次')
+    assert((await call(guiFirst, { kind: 'flight', ui: 'gui' })).kind === 'allow' && requests === 1, 'GUI 同车道复用免弹')
+    assert((await call(guiFirst, { kind: 'flight' })).kind === 'allow' && requests === 2, 'GUI 批准不放行桥车道:桥车道首调须再弹卡', { requests })
+    assert((await call(guiFirst, { kind: 'flight', ui: 'bridge' })).kind === 'allow' && requests === 2, '显式 ui=bridge 与缺省同桶')
+    const bridgeFirst = { id: 'agent-bridge-first' } as unknown as object
+    assert((await call(bridgeFirst, { kind: 'hotel' })).kind === 'allow' && requests === 3, '桥车道首调弹卡一次')
+    assert((await call(bridgeFirst, { kind: 'hotel', ui: 'gui' })).kind === 'allow' && requests === 4, '桥车道批准不放行 GUI 车道(开窗是另一件事):GUI 首调须再弹卡', { requests })
+
+    let asked = 0
+    const rejectGui: ApprovalSeam = { request: async ({ reason }) => { asked += 1; return /隔离/.test(reason ?? '') ? 'rejected' : 'allowed-once' } }
+    const gateRej = createConsentGate({ access: () => 'ask', approval: () => rejectGui })
+    const rejAgent = { id: 'agent-gui-reject' } as unknown as object
+    const callRej = (args: unknown) => gateRej({ name: 'gotry_session_search', agent: rejAgent, callId: 'lane-rej', arguments: args }, next)
+    const denied = await callRej({ kind: 'flight', ui: 'gui' })
+    assert(denied.kind === 'deny' && asked === 1 && /GUI 车道/.test(denied.kind === 'deny' ? denied.reason : ''), '拒绝 GUI → deny,措辞点名 GUI 车道', denied)
+    const deniedAgain = await callRej({ kind: 'flight', ui: 'gui' })
+    assert(deniedAgain.kind === 'deny' && asked === 1 && /GUI 车道/.test(deniedAgain.kind === 'deny' ? deniedAgain.reason : ''), 'GUI 拒绝后同车道不再弹卡(拒绝=本会话吊销)', deniedAgain)
+    assert((await callRej({ kind: 'flight' })).kind === 'allow' && asked === 2, 'GUI 拒绝不吊销桥车道:桥车道仍按自己的卡面问一次(本例批准)', { asked })
+  }
 }
 
 // J. 登录引导(产品工具 gotry_session_login 的能力层;纯函数/确定性部分)

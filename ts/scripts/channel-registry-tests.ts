@@ -15,6 +15,9 @@
  *  9. 持久健康面投影(#436):persistedDownChannels 纯投影(有效 down 才排除;
  *     ok/cooldown/缺时间戳/坏时间戳/未来时间戳一律不排除)+ routingAdvice
  *     与会话态的并集语义(会话失败永不被持久面解除)
+ * 10. GUI 车道进机票改道(2026-11-01 rc.33 实测:FlyAI 迪拜⇄香港 5/5 失败,routing
+ *     只给要扩展的桥车道 + 网页兜底):建议表含 ui=gui 且明说无需扩展、why 不冒称
+ *     登录态;GUI 车道健康记在自己的通道(失败不连坐桥车道,也不再荐自己)
  *
  * 运行: cd ts && npx tsx scripts/channel-registry-tests.ts
  */
@@ -56,7 +59,7 @@ console.log('1. 注册表封闭性 OK')
 
 // 2. 意图顺位(证据级降序)
 resetChannelHealth()
-assert.deepEqual(channelsForIntent('search-flight').map(c => c.id), ['flyai', 'session:ctrip-flight', 'web-read'], '机票顺位')
+assert.deepEqual(channelsForIntent('search-flight').map(c => c.id), ['flyai', 'session:ctrip-flight', 'session:ctrip-flight-gui', 'web-read'], '机票顺位(GUI 车道在桥车道之后:匿名公开价、驱动表单更慢)')
 assert.deepEqual(channelsForIntent('search-train').map(c => c.id), ['flyai', 'session:12306-train', 'web-read'], '火车顺位')
 assert.deepEqual(channelsForIntent('search-hotel').map(c => c.id), ['flyai', 'hbcli-hotel', 'session:ctrip-hotel', 'session:dida-portal', 'web-read'], '酒店完整顺位(Dida 登记后仍钉全序)')
 assert.deepEqual(channelsForIntent('weather').map(c => c.id), ['open-meteo'], '单通道意图')
@@ -232,6 +235,62 @@ assert.ok(
   '会话清除 + 持久面无 down → 通道恢复(恢复只对没有会话 down 的通道生效)',
 )
 console.log('9. 持久健康面投影 + 并集语义(#436)OK')
+
+// 10. GUI 车道进机票改道(2026-11-01 rc.33 实测)
+resetChannelHealth()
+const afterFlyai = routingAdvice('search-flight', { excludeChannel: 'flyai', now: NOW })
+const guiAlt = afterFlyai.alternatives.find(a => a.channel === 'session:ctrip-flight-gui')
+assert.ok(guiAlt, 'FlyAI 机票失败的 routing 必含 GUI 车道')
+assert.equal(guiAlt!.tool, 'gotry_session_search')
+assert.match(guiAlt!.hint ?? '', /kind=flight/, 'hint 带 kind')
+assert.match(guiAlt!.hint ?? '', /ui=gui/, 'hint 给出可照抄的 ui=gui 参数')
+assert.match(guiAlt!.setup ?? '', /无需.*扩展/, 'setup 明说无需扩展')
+assert.ok(!/Stai Travel Bridge/.test(guiAlt!.setup ?? ''), 'GUI 车道 setup 不要求装扩展')
+assert.match(guiAlt!.why, /匿名/, 'why 如实:匿名公开价')
+assert.ok(!/登录态/.test(guiAlt!.why), 'why 不冒称登录态真实价')
+assert.match(afterFlyai.alternatives.find(a => a.channel === 'session:ctrip-flight')?.setup ?? '', /Stai Travel Bridge/, '桥车道 setup 不变(仍需扩展)')
+noteChannelVerdict('session:ctrip-flight', 'needs-extension', { now: NOW })
+assert.ok(
+  routingAdvice('search-flight', { excludeChannel: 'session:ctrip-flight', now: NOW }).alternatives.some(a => a.channel === 'session:ctrip-flight-gui'),
+  '桥车道缺扩展 down 后 GUI 车道仍在建议表',
+)
+
+// 产品接线:真注册的工具 + 隔离效应缝(零网络、隔离 stateRoot)
+resetChannelHealth()
+const guiRoot = await mkdtemp(join(tmpdir(), 'gotry-gui-routing-'))
+const guiTools: typeof registered = []
+const guiCtx = {
+  tools: { register: (t: unknown) => guiTools.push(t as never) },
+  systemPrompt: { variable: () => {} },
+  on: () => () => {},
+} as unknown as Context
+const effects: string[] = []
+const guiEffect = async (input: { effect: string }) => {
+  effects.push(input.effect)
+  if (input.effect === 'FLYAI_SEARCH') {
+    return { result: { ok: false, via: 'flyai', kind: 'flight', verdict: 'error', error: 'upstream failed', evidence: '[test:flyai]' }, trace: {} }
+  }
+  if (input.effect === 'SESSION_FLIGHT_GUI_SEARCH') {
+    return { result: { ok: false, via: 'session-ctrip-flight-gui-error', verdict: 'challenged', error: '风控', evidence: '[test:gui]', anonymous: true, trip: 'oneway', latencyMs: 1 }, trace: {} }
+  }
+  throw new Error(`unexpected effect ${input.effect}`)
+}
+apply(guiCtx, { stateRoot: guiRoot, timeoutMs: 5_000, hbcliBin: 'hbcli-not-on-path', sessionAccess: 'off' } as never, { effect: guiEffect as never })
+const guiTool = (name: string) => guiTools.find(t => t.name === name)!
+type Routed = { routing?: { alternatives: Array<{ channel: string; hint?: string }> } }
+const flyaiFailed = await guiTool('gotry_flyai_search').execute({ kind: 'flight', from: '迪拜', to: '香港', date: '2099-12-06' }, null) as Routed
+assert.ok(
+  flyaiFailed.routing?.alternatives.some(a => a.channel === 'session:ctrip-flight-gui' && /ui=gui/.test(a.hint ?? '')),
+  'FlyAI 机票失败的工具结果 routing 带 GUI 车道',
+)
+const guiFailed = await guiTool('gotry_session_search').execute({ kind: 'flight', from: '香港', to: '迪拜', date: '2099-12-06', ui: 'gui' }, null) as Routed
+assert.deepEqual(effects, ['FLYAI_SEARCH', 'SESSION_FLIGHT_GUI_SEARCH'], '两次调用各走一次效应')
+assert.equal(channelState('session:ctrip-flight-gui')?.state, 'down', 'GUI 车道 challenged 记在自己的通道')
+assert.equal(channelState('session:ctrip-flight'), undefined, 'GUI 车道失败不连坐桥车道')
+assert.ok(!guiFailed.routing?.alternatives.some(a => a.channel === 'session:ctrip-flight-gui'), 'GUI 车道失败后 routing 不再荐 GUI 车道(challenged 不重试)')
+assert.ok(guiFailed.routing?.alternatives.some(a => a.channel === 'session:ctrip-flight'), '桥车道仍是备选')
+await rm(guiRoot, { recursive: true, force: true })
+console.log('10. GUI 车道进机票改道(无需扩展/why 如实/健康自记)OK')
 
 await rm(stateRoot, { recursive: true, force: true })
 console.log('channel-registry-tests: 全部通过')
