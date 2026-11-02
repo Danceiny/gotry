@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -32,6 +32,7 @@ import { classifyTurn, TURN_HANDOFF_ETA_LABEL, turnPolicyFor, type TurnPolicy } 
 export const TURN_DEADLINE_SOFT = 'TURN_DEADLINE_SOFT'
 export const TURN_DEADLINE_EXHAUSTED = 'TURN_DEADLINE_EXHAUSTED'
 export const TURN_DEADLINE_HANDOFF = 'TURN_DEADLINE_HANDOFF'
+export const TURN_DEADLINE_STALE_DELIVERABLE = 'TURN_DEADLINE_STALE_DELIVERABLE'
 export const TURN_HANDOFF_SCHEMA = 'gotry_turn_handoff.v1' as const
 
 export interface TurnHandoffTicket {
@@ -221,7 +222,15 @@ function convergenceContext(code: string, text: string) {
   }
 }
 
-function exhaustionResult(reason: string): ToolExecutionResult {
+// Final-only mode keeps one write: saving the answer artifact converges, it
+// does not research. Every other write stays refused and is tracked.
+function finalWriteNote(left: boolean): string {
+  return left
+    ? 'One write is still allowed in this turn, to save the answer artifact; any further write is refused.'
+    : 'The one write allowed after the deadline has been used; any further write is refused.'
+}
+
+function exhaustionResult(reason: string, finalWriteLeft: boolean): ToolExecutionResult {
   return {
     isError: true,
     error: {
@@ -231,18 +240,18 @@ function exhaustionResult(reason: string): ToolExecutionResult {
     content: [{ type: 'text', text: reason }],
     additionalContexts: [convergenceContext(
       TURN_DEADLINE_EXHAUSTED,
-      'No more tool dispatches are permitted in this turn. Produce the final answer from existing results.',
+      `No more research tools are permitted in this turn. Produce the final answer from existing results. ${finalWriteNote(finalWriteLeft)} Never claim a file was created or updated when its tool call failed or was refused.`,
     ) as never],
   }
 }
 
-function handoffResult(ticket: TurnHandoffTicket): ToolExecutionResult {
+function handoffResult(ticket: TurnHandoffTicket, finalWriteLeft: boolean): ToolExecutionResult {
   const state = ticket.status === 'running' && ticket.jobId
     ? `Background planning started as native background job ${ticket.jobId} (estimated ${ticket.etaLabel}; not a guarantee). Track or cancel with job_list/job_output/job_kill.`
     : ticket.status === 'failed'
       ? `Background planning could not start: ${ticket.error ?? 'unknown failure'}. Tell the user it failed; do not promise later delivery.`
       : 'The ticket is queued; the background worker has not started. Tell the user it is pending, not running; do not promise a completion time.'
-  const instruction = `Async ticket ${ticket.id} persisted. ${state} Stop research and answer from existing results. Never claim a file was created when its tool call failed or was refused. For any successfully written output, call present with its exact existing path before the final response. Mention ticket ${ticket.id}.`
+  const instruction = `Async ticket ${ticket.id} persisted. ${state} Stop research and answer from existing results. ${finalWriteNote(finalWriteLeft)} Never claim a file was created or updated when its tool call failed or was refused. For any successfully written output, call present with its exact existing path before the final response. Mention ticket ${ticket.id}.`
   return {
     isError: true,
     error: {
@@ -252,6 +261,48 @@ function handoffResult(ticket: TurnHandoffTicket): ToolExecutionResult {
     content: [{ type: 'text', text: `${TURN_DEADLINE_HANDOFF}: ${instruction}` }],
     additionalContexts: [convergenceContext(TURN_DEADLINE_HANDOFF, instruction) as never],
   }
+}
+
+/** Name the file a refused write or edit left untouched, ahead of the guidance. */
+function refusedChange(result: ToolExecutionResult, path: string): ToolExecutionResult {
+  return { ...result, content: [{ type: 'text', text: `Refused: ${path} was not written or updated in this turn.` }, ...result.content] }
+}
+
+type NotUpdated = 'refused' | 'failed'
+
+/**
+ * Present after a refused update would publish the earlier file as this turn's
+ * deliverable (turn 8 of the rc.33 field session presented turn-7 files as
+ * rewritten). Refuse it and name each file with the version actually on disk.
+ */
+async function staleDeliveryResult(files: Array<{ path: string; target: string; reason: NotUpdated }>): Promise<ToolExecutionResult> {
+  const lines = await Promise.all(files.map(async file => {
+    const why = `its write ${file.reason === 'refused' ? 'was refused' : 'failed'} after the turn deadline`
+    const modified = await stat(file.target).then(info => info.mtime.toISOString(), () => undefined)
+    return modified
+      ? `${file.path} was not updated in this turn: ${why}; the file on disk is the earlier version, last modified ${modified}.`
+      : `${file.path} was not written in this turn: ${why}, and no file exists at that path.`
+  }))
+  const text = `${TURN_DEADLINE_STALE_DELIVERABLE}: Not presented. ${lines.join(' ')} Tell the user these files were not written or updated, and never describe them as rewritten. Present any other file in a separate call.`
+  return {
+    isError: true,
+    error: { message: text, info: { name: 'TurnDeadlineStaleDeliverable', code: TURN_DEADLINE_STALE_DELIVERABLE } },
+    content: [{ type: 'text', text }],
+  }
+}
+
+/** The file a write or edit targets, resolved like the fs tools against the session cwd. */
+function changedFile(name: string, args: unknown, cwd: string): { path: string; target: string } | undefined {
+  if (name !== 'write' && name !== 'edit') return undefined
+  const path = (args as { file_path?: unknown } | undefined)?.file_path
+  return typeof path === 'string' && path.trim() ? { path, target: resolve(cwd, path) } : undefined
+}
+
+function presentedPaths(args: unknown): string[] {
+  const files = (args as { files?: unknown } | undefined)?.files
+  if (!Array.isArray(files)) return []
+  return files.map(file => (file as { path?: unknown } | null)?.path)
+    .filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
 }
 
 type RestrictableTools = {
@@ -264,6 +315,24 @@ type AgentTurnState = {
   policy: TurnPolicy
   userMessage?: string
   handoff?: Promise<TurnHandoffTicket>
+  /** Closed waits on the user inside this budget: the user's time, not the turn's. */
+  waitedMs: number
+  /** The hard deadline has refused or exempted a call: final-only mode. */
+  closed?: boolean
+  finalWriteUsed?: boolean
+}
+
+/** Per-turn facts that survive a budget reset by a new user message. */
+type TurnFacts = {
+  /** Open waits on the user (approval ids, question tokens), and since when. */
+  waits: Set<unknown>
+  waitingSince: number
+  /** Approval id → call id while the decision is pending. */
+  asked: Map<string, string | undefined>
+  /** Calls the user approved; each still runs once past the deadline. */
+  approved: Set<string>
+  /** Resolved paths whose update the deadline refused, or whose final write failed. */
+  notUpdated: Map<string, NotUpdated>
 }
 
 /**
@@ -291,21 +360,52 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
     return { ...policy, softMs: softPin ?? policy.softMs, hardMs: hardPin ?? policy.hardMs }
   }
 
+  const pinnedPolicy = (): TurnPolicy => ({ ...defaultPolicy, softMs: softPin ?? defaultPolicy.softMs, hardMs: hardPin ?? defaultPolicy.hardMs })
   const stateByAgent = new Map<string, AgentTurnState>()
+  const factsByAgent = new Map<string, TurnFacts>()
   const softExecutions = new Map<ToolExecutionToken, { agentId: string; exit: string }>()
-  const handoffExecutions = new Map<ToolExecutionToken, { agentId: string; contexts: NonNullable<ToolExecutionResult['additionalContexts']> }>()
+  const guidedExecutions = new Map<ToolExecutionToken, { agentId: string; contexts: NonNullable<ToolExecutionResult['additionalContexts']> }>()
   const finalOnlyDisposers = new Map<string, () => void>()
 
   const clearAgent = (agentId: string) => {
     stateByAgent.delete(agentId)
+    factsByAgent.delete(agentId)
     for (const [token, owner] of softExecutions) {
       if (owner.agentId === agentId) softExecutions.delete(token)
     }
-    for (const [token, owner] of handoffExecutions) {
-      if (owner.agentId === agentId) handoffExecutions.delete(token)
+    for (const [token, owner] of guidedExecutions) {
+      if (owner.agentId === agentId) guidedExecutions.delete(token)
     }
     finalOnlyDisposers.get(agentId)?.()
     finalOnlyDisposers.delete(agentId)
+  }
+
+  const factsOf = (agentId: string): TurnFacts => {
+    let facts = factsByAgent.get(agentId)
+    if (!facts) {
+      facts = { waits: new Set(), waitingSince: 0, asked: new Map(), approved: new Set(), notUpdated: new Map() }
+      factsByAgent.set(agentId, facts)
+    }
+    return facts
+  }
+
+  // Waiting on the user is the user's time, not the turn's: the budget pauses
+  // while any wait is open, and overlapping waits pause it once.
+  const beginWait = (agentId: string, key: unknown) => {
+    const facts = factsOf(agentId)
+    if (facts.waits.size === 0) facts.waitingSince = now()
+    facts.waits.add(key)
+  }
+  const endWait = (agentId: string, key: unknown) => {
+    const facts = factsByAgent.get(agentId)
+    if (!facts?.waits.delete(key) || facts.waits.size > 0) return
+    const state = stateByAgent.get(agentId)
+    if (state) state.waitedMs += now() - Math.max(facts.waitingSince, state.startedAt)
+  }
+  const elapsedOf = (agentId: string, state: AgentTurnState) => {
+    const facts = factsByAgent.get(agentId)
+    const open = facts && facts.waits.size > 0 ? now() - Math.max(facts.waitingSince, state.startedAt) : 0
+    return now() - state.startedAt - state.waitedMs - open
   }
 
   const enterFinalOnly = (agent: Agent) => {
@@ -318,9 +418,10 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
       // same per-call denial branch and stay refused until the next turn.
       return
     }
+    // write stays visible for the one final write; later writes hit the guard.
     const inheritedNames = globalTools.schemas()
       .map(schema => schema.name)
-      .filter(name => name !== 'run_code' && name !== 'present')
+      .filter(name => name !== 'run_code' && name !== 'present' && name !== 'write')
     if (inheritedNames.length === 0) return
     finalOnlyDisposers.set(agentId, scopedTools.restrict({ deny: inheritedNames }))
   }
@@ -340,12 +441,7 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
     if (event.type === 'turn/start') {
       finalOnlyDisposers.get(agentId)?.()
       finalOnlyDisposers.delete(agentId)
-      if (!stateByAgent.has(agentId)) {
-        stateByAgent.set(agentId, {
-          startedAt: now(),
-          policy: { ...defaultPolicy, softMs: softPin ?? defaultPolicy.softMs, hardMs: hardPin ?? defaultPolicy.hardMs },
-        })
-      }
+      if (!stateByAgent.has(agentId)) stateByAgent.set(agentId, { startedAt: now(), policy: pinnedPolicy(), waitedMs: 0 })
       return
     }
     if (event.type === 'user/message') {
@@ -358,8 +454,26 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
       if (!text.trim()) return
       // 每个 user 消息 = 新的预算:路由分类 + 时钟重置。plugin/skill 注入
       // 的 user/message(source.kind !== 'user')不参与路由。
-      stateByAgent.set(agentId, { startedAt: now(), policy: routePolicy(text), userMessage: text })
+      stateByAgent.set(agentId, { startedAt: now(), policy: routePolicy(text), userMessage: text, waitedMs: 0 })
+      return
     }
+    // DSH awaits approvals in tools/pre-execute (ToolRuntime.prepareExecution →
+    // ApprovalService.request), before the tools/execute gate below measures the
+    // call; the asked/decided audit pair brackets the user's decision.
+    const type: string = event.type
+    if (type !== 'approval/asked' && type !== 'approval/decided') return
+    const data = (event as { data?: { id?: unknown; callId?: unknown; outcome?: unknown } }).data
+    if (typeof data?.id !== 'string') return
+    const facts = factsOf(agentId)
+    if (type === 'approval/asked') {
+      facts.asked.set(data.id, typeof data.callId === 'string' ? data.callId : undefined)
+      beginWait(agentId, data.id)
+      return
+    }
+    const callId = facts.asked.get(data.id)
+    facts.asked.delete(data.id)
+    if (data.outcome === 'allowed-once' && callId !== undefined) facts.approved.add(callId)
+    endWait(agentId, data.id)
   })
   ctx.on('session/disposed', subject => clearAgent(String(subject.id)))
 
@@ -367,26 +481,59 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
     // Programmatic/direct calls are not part of a model planner turn.
     if (!exec.agent) return next()
     const agentId = keyOfAgent(exec.agent)
-    const state = stateByAgent.get(agentId)
-      ?? { startedAt: now(), policy: { ...defaultPolicy, softMs: softPin ?? defaultPolicy.softMs, hardMs: hardPin ?? defaultPolicy.hardMs } }
+    const state = stateByAgent.get(agentId) ?? { startedAt: now(), policy: pinnedPolicy(), waitedMs: 0 }
     stateByAgent.set(agentId, state)
+    const facts = factsOf(agentId)
+    const cwd = exec.agent.session?.header.cwd ?? process.cwd()
 
     // Present validates files on disk and publishes native deliverable events;
-    // it must remain callable after the research window closes.
-    if (exec.name === 'present') return next()
+    // it must remain callable after the research window closes, except for a
+    // file whose update this turn did not happen: it would read as rewritten.
+    if (exec.name === 'present') {
+      const stale = presentedPaths(exec.arguments).flatMap(path => {
+        const target = resolve(cwd, path)
+        const reason = facts.notUpdated.get(target)
+        return reason ? [{ path, target, reason }] : []
+      })
+      return stale.length > 0 ? staleDeliveryResult(stale) : next()
+    }
 
-    const elapsed = now() - state.startedAt
+    const change = changedFile(exec.name, exec.arguments, cwd)
+    // The user decided on this exact call; the deadline never discards that.
+    const callId = exec.callId as string | undefined
+    const approved = callId !== undefined && facts.approved.delete(callId)
+    const elapsed = elapsedOf(agentId, state)
     if (elapsed > state.policy.hardMs) {
+      // Final-only: present, the call the user approved, and one write.
+      const exempt = approved || (exec.name === 'write' && !state.finalWriteUsed)
+      if (exempt && exec.name === 'write') state.finalWriteUsed = true
+      const finalWriteLeft = !state.finalWriteUsed
+      const crossing = !state.closed
+      state.closed = true
+      if (change && !exempt) facts.notUpdated.set(change.target, 'refused')
+      const ran = exempt
+        ? Promise.resolve().then(() => next()).then(result => {
+          if (change) {
+            if (result.isError) facts.notUpdated.set(change.target, 'failed')
+            else facts.notUpdated.delete(change.target)
+          }
+          return result
+        }, error => {
+          if (change) facts.notUpdated.set(change.target, 'failed')
+          throw error
+        })
+        : undefined
+      let guidance: Promise<ToolExecutionResult>
+      let degraded: string
       if (state.policy.exit === 'handoff' && state.userMessage && options.stateRoot) {
         const root = options.stateRoot === '.'
           ? (exec.agent.session?.header.cwd ?? process.cwd()) : resolve(options.stateRoot)
-        const written = exec.name === 'write' && !state.handoff ? Promise.resolve().then(() => next()) : undefined
         if (!state.handoff) {
           const session = exec.agent.session
-          // Reserve the handoff before executing the write body. Parallel or
+          // Reserve the handoff before executing the exempt body. Parallel or
           // repeated calls see the same promise and cannot write/dispatch twice.
           state.handoff = (async () => {
-            try { await written } finally { enterFinalOnly(exec.agent!) }
+            try { await ran } finally { enterFinalOnly(exec.agent!) }
             let context: string | undefined
             let contextError: string | undefined
             try { context = handoffContext(session?.snapshotEvents() ?? []) }
@@ -403,35 +550,48 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
             return options.startHandoff ? options.startHandoff(ticket, exec.agent!, root) : ticket
           })()
         }
-        // The triggering call may be the output write itself. Execute it once,
-        // preserve its actual outcome, then require native present. Attach a
-        // rejection handler now even if the pending tool itself rejects.
-        const handoff = state.handoff.then(handoffResult, () => exhaustionResult(`${TURN_DEADLINE_EXHAUSTED}: ticket persistence failed; no background worker was started`))
-        return (async () => {
-          const output = await written
-          const guidance = await handoff
-          if (output) {
-            handoffExecutions.set(exec.token, { agentId, contexts: guidance.additionalContexts ?? [] })
-            // Keep the registry's canonical result object. Rebuilding it after
-            // restricting inherited schemas would make DSH re-resolve a tool
-            // that has just been hidden and report UNKNOWN_TOOL after saving.
-            return output
-          }
-          return guidance
-        })()
-          .catch(() => exhaustionResult(
-            `${TURN_DEADLINE_EXHAUSTED}: hard deadline ${state.policy.hardMs}ms reached (ticket persistence failed; degraded to converge)`,
-          ))
+        // Attach a rejection handler now even if the exempt tool itself rejects.
+        guidance = state.handoff.then(ticket => handoffResult(ticket, finalWriteLeft),
+          () => exhaustionResult(`${TURN_DEADLINE_EXHAUSTED}: ticket persistence failed; no background worker was started`, finalWriteLeft))
+        degraded = `${TURN_DEADLINE_EXHAUSTED}: hard deadline ${state.policy.hardMs}ms reached (ticket persistence failed; degraded to converge)`
+      } else {
+        // Suppress inherited research schemas on refusal, or once an exempt
+        // body has run; DSH's scoped schemas remain visible but hit this guard.
+        const close = () => enterFinalOnly(exec.agent!)
+        if (ran) void ran.then(close, close)
+        else close()
+        degraded = `${TURN_DEADLINE_EXHAUSTED}: turn exceeded hard deadline of ${state.policy.hardMs}ms (elapsed ${elapsed}ms); provide a final answer using existing results`
+        guidance = Promise.resolve(exhaustionResult(degraded, finalWriteLeft))
       }
-      // Suppress inherited research schemas immediately on refusal; DSH's
-      // scoped schemas remain visible but hit this same per-call guard.
-      enterFinalOnly(exec.agent)
-      return Promise.resolve(exhaustionResult(
-        `${TURN_DEADLINE_EXHAUSTED}: turn exceeded hard deadline of ${state.policy.hardMs}ms (elapsed ${elapsed}ms); provide a final answer using existing results`,
-      ))
+      return (async () => {
+        if (!ran) {
+          const refusal = await guidance
+          return change ? refusedChange(refusal, change.path) : refusal
+        }
+        // An exempt call keeps the registry's canonical result object.
+        // Rebuilding it after restricting inherited schemas would make DSH
+        // re-resolve a tool that has just been hidden and report UNKNOWN_TOOL.
+        // The call that closed the turn carries the guidance via post-execute.
+        const output = await ran
+        const contexts = (await guidance).additionalContexts ?? []
+        if (crossing) guidedExecutions.set(exec.token, { agentId, contexts })
+        return output
+      })().catch(() => exhaustionResult(degraded, finalWriteLeft))
     }
     if (elapsed > state.policy.softMs) {
       softExecutions.set(exec.token, { agentId, exit: state.policy.exit })
+    }
+    // The question tool's body waits for the user's answer: user time too.
+    if (exec.name === 'ask_user_question') {
+      beginWait(agentId, exec.token)
+      return next().finally(() => endWait(agentId, exec.token))
+    }
+    // A successful write clears an earlier refusal for the same file.
+    if (change && facts.notUpdated.has(change.target)) {
+      return next().then(result => {
+        if (!result.isError) facts.notUpdated.delete(change.target)
+        return result
+      })
     }
     return next()
   })
@@ -439,9 +599,9 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
   ctx.on('tools/post-execute', (exec, _result, next) => {
     return next().then(decision => {
       const owner = softExecutions.get(exec.token)
-      const handoff = handoffExecutions.get(exec.token)
-      handoffExecutions.delete(exec.token)
-      if (!owner && !handoff) return decision
+      const guided = guidedExecutions.get(exec.token)
+      guidedExecutions.delete(exec.token)
+      if (!owner && !guided) return decision
       softExecutions.delete(exec.token)
       const text = owner?.exit === 'handoff'
         ? 'Turn has crossed the soft deadline of a deep-planning turn. Wrap up context gathering now; the turn will hand off to background planning at the hard deadline.'
@@ -450,7 +610,7 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
         ...decision,
         additionalContexts: [
           ...(decision.additionalContexts ?? []),
-          ...(handoff?.contexts ?? []),
+          ...(guided?.contexts ?? []),
           ...(owner ? [convergenceContext(TURN_DEADLINE_SOFT, text) as never] : []),
         ],
       }
