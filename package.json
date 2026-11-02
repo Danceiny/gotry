@@ -81,6 +81,8 @@
     "ts/src/booking-saga.ts",
     "ts/src/bookable-facts.ts",
     "ts/src/artifact-gate.ts",
+    "ts/src/evidence-date-binding.ts",
+    "ts/src/evidence-date-guard.ts",
     "ts/src/tool-packet.ts",
     "ts/src/turn-deadline.ts",
     "ts/src/turn-handoff-job.ts",
