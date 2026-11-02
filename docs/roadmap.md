@@ -20,7 +20,7 @@
 
 | Surface | Current position | Authority |
 |---|---|---|
-| Published package | npm `latest` points to `0.2.0-rc.32`; the compatibility `rc` tag remains on `0.0.1-rc.20`. Source `main` may be ahead of both. | [`release-notes.md`](release-notes.md) and [CHANGELOG](../CHANGELOG.md) |
+| Published package | npm `latest` points to `0.2.0-rc.33`; the compatibility `rc` tag remains on `0.0.1-rc.20`. Source `main` may be ahead of both. | [`release-notes.md`](release-notes.md) and [CHANGELOG](../CHANGELOG.md) |
 | Product milestone | M3 evidence is open. The web product and deterministic scorer exist; the real 50–200 seed-user outcome set does not yet satisfy the exit gate. | [#22](https://github.com/Danceiny/gotry/issues/22) |
 | AaaS service line | Chartered 2026-10-21 as a parallel engineering line: one cloud GoTry service shared by many users. The A0 design (RFC, ADR re-review, threat model) was accepted on 2026-10-28. A1 (the per-tenant state layer) and A2 (identity seam, quotas and execution limits) are on `main` with offline evidence; A3 (deployment) is next. It does not substitute M3 evidence and does not unseal M5 writes. | [#674](https://github.com/Danceiny/gotry/issues/674), [`rfc/aaas-rfc.md`](rfc/aaas-rfc.md) |
 | Evaluation | Deterministic contracts and validators exist. No official external score or uplift is claimed without an admitted, complete cohort. | [`evaluation/evaluation-foundation.md`](evaluation/evaluation-foundation.md) |

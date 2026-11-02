@@ -38,6 +38,10 @@ Run `npx @danceiny/gotry@0.2.0-rc.33 web` (Node ≥ 22.15). Once `latest` points
 
 The full-stack regression covers the AaaS layer offline and on real local processes: a multi-process fault-injection drill, adversarial multi-tenant suites, and quota, governor and broker checks. Nothing here is deployed. There is no production authenticator, and multi-replica operation (A3) has not run. The `gotry` CLI and `web` do not use the tenant layer. Login pairing is proven live only on its timeout path; the signed-in path is held by an offline contract. Publication is established only by a passing registry pull-back receipt.
 
+### Published
+
+Published to npm on 2026-11-01 as `@danceiny/gotry@0.2.0-rc.33` with `TAG=latest ./scripts/publish-npm.sh` (tag passed explicitly, #50①), then pulled back from the registry: `npm view` shows `latest` → `0.2.0-rc.33` (shasum `ef0d9324eeea11ed938cad275bf8401e2d978fe8`, 627 files) — the shasum `npm pack --dry-run` predicted from the tagged tree before publishing — and the downloaded tarball hashes to it. On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) `npx @danceiny/gotry@0.2.0-rc.33` passes end to end: `doctor` prints its report, the dist entry loads the `gotry-tools` plugin, `web` boots (token URL 303 → 200, no token 401), and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: [v0.2.0-rc.33](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.33). The compatibility `rc` tag is still on `0.0.1-rc.20`.
+
 ---
 
 ## v0.2.0-rc.32 · 2026-10-14
