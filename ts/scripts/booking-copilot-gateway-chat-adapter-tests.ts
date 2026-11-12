@@ -153,10 +153,12 @@ function adapterFor(port: number, captured?: unknown): GatewayChatAdapterInstanc
   assert.equal(requests[0].tools?.[0].function.name, 'booking_search_hotels')
   assert.equal(requests[0].stream, true)
   assert.deepEqual(requests[0].stream_options, { include_usage: true })
-  // The harness profile runs the planner with thinking enabled at high effort
-  // (rc.1 wire parity); dropping these fields measurably degrades the model's
-  // adherence to the planner's intent rules.
-  assert.deepEqual(requests[0].thinking, { type: 'enabled' })
+  // The harness profile runs the planner with thinking on at high effort; dropping
+  // these fields measurably degrades the model's adherence to the planner's intent
+  // rules. The thinking-on spelling is the gateway upstream's vocabulary, which
+  // accepts `adaptive`/`disabled` and rejects the older `enabled` with HTTP 400
+  // (hotel-be#35339).
+  assert.deepEqual(requests[0].thinking, { type: 'adaptive' })
   assert.equal(requests[0].reasoning_effort, 'high')
 
   const kinds = chunks.map((c) => c.type)

@@ -242,19 +242,29 @@ async function* translate(payloads) {
 /**
  * Resolve the thinking/effort wire pair, ported verbatim from the dsh
  * 0.1.5-rc.1 DeepSeek adapter (resolveThinking). The harness profile pins the
- * planner route at thinking=enabled/effort=high — the model is expected to
+ * planner route at thinking=on/effort=high — the model is expected to
  * <think> before emitting the typed decision, and dropping these fields runs
  * the model in the gateway's default (non-thinking) mode, which measurably
  * ignores the planner's fine-grained intent rules.
+ *
+ * `thinking.type` speaks the **gateway upstream's** vocabulary, not the
+ * harness's. The MiniMax upstream behind the team gateway accepts only
+ * `adaptive` and `disabled`; the older `enabled` spelling is rejected with
+ * HTTP 400 (`invalid params, invalid ***.type: "enabled" (allowed: adaptive,
+ * disabled) (2013)`), which the harness maps to INVALID_REQUEST and the
+ * planner maps to PLANNER_PROVIDER_REQUEST_REJECTED — every planner turn then
+ * fails at the provider (hotel-be#35339). `adaptive` is the thinking-on value
+ * of the current vocabulary; measured on the UAT gateway it keeps the <think>
+ * block and the tool call, so the planner's reasoning behaviour is unchanged.
  */
 function resolveThinking(options) {
 	if (options.purpose === 'session-title') return { thinking: { type: 'disabled' } }
 	const effort = options.reasoningEffort
 	if (effort === 'off') return { thinking: { type: 'disabled' } }
 	if (effort === 'low' || effort === 'high' || effort === 'max') {
-		return { thinking: { type: 'enabled' }, reasoning_effort: effort }
+		return { thinking: { type: 'adaptive' }, reasoning_effort: effort }
 	}
-	return { thinking: { type: 'enabled' }, reasoning_effort: 'high' }
+	return { thinking: { type: 'adaptive' }, reasoning_effort: 'high' }
 }
 
 /**
