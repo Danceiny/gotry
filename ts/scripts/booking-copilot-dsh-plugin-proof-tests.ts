@@ -114,6 +114,29 @@ for (const invalidProposal of [
 }
 assert.equal(concludedTurns, 0, 'canonical semantic failures never conclude the dsh turn')
 
+// The tool name is the authority for the action kind: one tool per kind. A
+// model that omits the redundant `kind` field used to answer INVALID_ARGS and
+// lose the whole turn (hotel-be#35343); the runtime supplies the kind the
+// called tool stands for instead.
+const runSearchTool = registered.find((tool) => tool.name === 'booking_run_search')!
+const rawExecuteRunSearch = runSearchTool.execute as (args: unknown, exec: { concludeTurn(): void }) => Promise<unknown>
+let runSearchConcludedTurns = 0
+const executeRunSearch = (args: unknown) => rawExecuteRunSearch(args, {
+  concludeTurn() { runSearchConcludedTurns += 1 },
+})
+assert.deepEqual(
+  await executeRunSearch({ input: {}, intent: { target: 'search.results' } }),
+  { accepted: true, decisionKind: 'operation', actionKind: 'search.run' },
+  'a tool call without the redundant kind field is completed with the kind the tool stands for',
+)
+assert.equal(runSearchConcludedTurns, 1, 'the kind-less call concludes the model turn')
+await assert.rejects(
+  executeRunSearch({ kind: 'hotel.select', input: { hotelRef: 'hotel-1' }, intent: { target: 'hotel.selected' } }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'an explicit kind that contradicts the called tool still fails closed',
+)
+assert.equal(runSearchConcludedTurns, 1, 'a contradicting kind never concludes the model turn')
+
 const compare = registered.find((tool) => tool.name === 'booking_compare_offers')!
 const rawExecuteCompare = compare.execute as (args: unknown, exec: { concludeTurn(): void }) => Promise<unknown>
 let compareConcludedTurns = 0

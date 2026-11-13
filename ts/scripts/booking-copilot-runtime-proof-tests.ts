@@ -20,7 +20,9 @@ import type { BookingIntentProjection } from '../src/booking-surface/booking-int
 import { normalizeBookingErrorCode, safeBookingErrorMessage } from '../src/booking-surface/error-codes.ts'
 
 for (const [raw, code] of [
-  ['planner_invalid_tool_arguments', 'PLANNER_PROVIDER_RESPONSE_INVALID'],
+  ['planner_invalid_tool_arguments', 'PLANNER_SCHEMA_SHAPE_INVALID'],
+  ['planner_invalid_typed_decision', 'PLANNER_SCHEMA_SHAPE_INVALID'],
+  ['planner_booking_intent_required', 'PLANNER_SCHEMA_SHAPE_INVALID'],
   ['planner_terminal_intent_target_unachieved', 'PLANNER_PROVIDER_RESPONSE_INVALID'],
   ['planner_forbidden_tool', 'UNSUPPORTED_ACTION'],
   ['action_intent_mismatch', 'INVALID_ACTION'],
@@ -31,6 +33,19 @@ for (const [raw, code] of [
   assert.equal(normalizeBookingErrorCode(new Error(raw)), code, `${raw} has a precise closed boundary classification`)
   assert.notEqual(safeBookingErrorMessage(code), 'The planner request failed at the typed runtime boundary.', `${raw} is not collapsed into the generic planner failure`)
 }
+
+// A schema-shaped rejection is our own runtime refusing the model's arguments,
+// not the upstream refusing the model request: the message must not blame the
+// provider, or every such failure sends operations to the upstream (the
+// #35339 detour, hotel-be#35343).
+assert.equal(
+  safeBookingErrorMessage('PLANNER_SCHEMA_SHAPE_INVALID'),
+  'The planner produced a tool call whose arguments did not match the declared schema.',
+)
+assert.ok(
+  !safeBookingErrorMessage('PLANNER_SCHEMA_SHAPE_INVALID').toLowerCase().includes('provider'),
+  'the shape code must not name the provider as the cause',
+)
 
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-runtime-'))
 const workspace = (revision = 0): BookingWorkspaceSnapshot => ({

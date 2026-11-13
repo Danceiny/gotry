@@ -20,6 +20,8 @@ import type { LlmTicketIssuer } from '../tenant-seam/llm-broker.ts'
 export { formatUtcOffsetLabel } from '../time-anchor.ts'
 import {
   actionsForEmbeddedCapability,
+  bookingActionKindForTool,
+  bookingToolCallWithKind,
   type EmbeddedBookingCapabilityId,
 } from './profile.ts'
 import { bookingDigest, type BookingActionCheckpoint, type BookingCopilotTaskState, type BookingPlannerDecision, type BookingPlannerSessionFactory } from './runtime.ts'
@@ -1241,6 +1243,12 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     invalidDecisionLog('arguments_not_string', { argumentsType: typeof rawArgs })
     throw new Error('planner_invalid_tool_arguments')
   }
+  // The tool name is the authority for the action kind: one tool per kind. A
+  // model that omits the redundant `kind` field must not fail the turn, so the
+  // runtime takes the kind the called tool stands for (hotel-be#35343). An
+  // explicit `kind` is never overwritten — a contradiction stays a
+  // contradiction and the authority check below still rejects it.
+  args = bookingToolCallWithKind(args, bookingActionKindForTool(name))
   let parsedDecision: unknown
   const directCompact = compactDecision(args)
   if (directCompact) {
@@ -1472,6 +1480,7 @@ type ProviderFailure = {
     | 'PLANNER_PROVIDER_UNAVAILABLE'
     | 'PLANNER_PROVIDER_REQUEST_REJECTED'
     | 'PLANNER_PROVIDER_RESPONSE_INVALID'
+    | 'PLANNER_SCHEMA_SHAPE_INVALID'
     | 'PLANNER_PROVIDER_TIMEOUT'
     | 'PLANNER_BOOT_TIMEOUT'
     | 'PLANNER_CONFIGURATION_INVALID'
@@ -1582,11 +1591,29 @@ function providerFailureMessage(code: ProviderFailure['code']): string {
     case 'PLANNER_PROVIDER_UNAVAILABLE': return 'The planner provider is temporarily unavailable.'
     case 'PLANNER_PROVIDER_REQUEST_REJECTED': return 'The planner provider rejected the model request.'
     case 'PLANNER_PROVIDER_RESPONSE_INVALID': return 'The planner provider returned an invalid response.'
+    case 'PLANNER_SCHEMA_SHAPE_INVALID': return 'The planner produced a tool call whose arguments did not match the declared schema.'
     case 'PLANNER_PROVIDER_TIMEOUT': return 'The planner did not respond within the booking turn deadline.'
     case 'PLANNER_BOOT_TIMEOUT': return 'The planner runtime did not finish starting within its local boot budget.'
     case 'PLANNER_CONFIGURATION_INVALID': return 'The planner provider configuration is invalid.'
     case 'PLANNER_FAILED': return 'The planner stopped unexpectedly before producing a usable action.'
   }
+}
+
+/**
+ * A provider request rejected right after this turn's own tool call missed the
+ * declared schema is not the upstream refusing the model request: the model
+ * produced a tool call the runtime could not read, the repair prompt carried
+ * that call, and the follow-up request was rejected with it. Report the shape
+ * cause instead of blaming the provider (hotel-be#35343) — otherwise every
+ * such failure sends operations to the upstream, which is the #35339 detour.
+ */
+function providerFailureAfterSchemaRepair(
+  failure: ProviderFailure,
+  schemaRepairAttempted: boolean,
+): ProviderFailure {
+  if (!schemaRepairAttempted) return failure
+  if (failure.code !== 'PLANNER_PROVIDER_REQUEST_REJECTED') return failure
+  return { code: 'PLANNER_SCHEMA_SHAPE_INVALID', retryable: failure.retryable }
 }
 
 class PlannerTurnDeadlineExceeded extends Error {
@@ -1902,7 +1929,7 @@ export async function createDshEmbeddedBookingPlanner(
               if (decisions.length === 0) {
                 const terminalProviderState = terminalProviderStateFromEvents(result.events)
                 if (terminalProviderState.failure) {
-                  const providerFailure = terminalProviderState.failure
+                  const providerFailure = providerFailureAfterSchemaRepair(terminalProviderState.failure, schemaRepairAttempted)
                   metricOutcome = 'provider_error'
                   retire(runPort)
                   return [{ kind: 'error', error: { code: providerFailure.code, message: providerFailureMessage(providerFailure.code), retryable: providerFailure.retryable } }]
@@ -1910,9 +1937,10 @@ export async function createDshEmbeddedBookingPlanner(
                 if (!terminalProviderState.present) {
                   const providerAttemptFailure = providerAttemptFailureFromEvents(result.events)
                   if (providerAttemptFailure) {
+                    const attemptFailure = providerFailureAfterSchemaRepair(providerAttemptFailure, schemaRepairAttempted)
                     metricOutcome = 'provider_error'
                     retire(runPort)
-                    return [{ kind: 'error', error: { code: providerAttemptFailure.code, message: providerFailureMessage(providerAttemptFailure.code), retryable: providerAttemptFailure.retryable } }]
+                    return [{ kind: 'error', error: { code: attemptFailure.code, message: providerFailureMessage(attemptFailure.code), retryable: attemptFailure.retryable } }]
                   }
                 }
               }

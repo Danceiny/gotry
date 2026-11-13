@@ -983,6 +983,99 @@ assertRuntimeMaterializedOperation(schemaRepairedDecision, 'search.run', {}, tas
 assert.equal(schemaRepairRuns, 2, 'schema rejection consumes a bounded retry attempt')
 await schemaRejectedThenRepaired.close()
 
+// The tool registry is the authority for the action kind: one tool per kind.
+// A model that omits the redundant `kind` field used to fail the whole turn
+// with `arguments_not_canonical_envelope` (hotel-be#35343); the runtime takes
+// the kind the called tool stands for.
+const kindlessToolCall = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: successfulToolEvents(
+          'booking_run_search',
+          JSON.stringify({ input: {}, intent: { target: 'search.results' } }),
+          'call-kindless-tool-call',
+        ),
+      }
+    },
+    async close() {},
+  },
+})
+const kindlessToolCallDecision = await kindlessToolCall.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-kindless-tool-call', workspace, request: { text: 'Find hotels' } },
+})
+assertRuntimeMaterializedOperation(kindlessToolCallDecision, 'search.run', {}, task, 'a tool call without the redundant kind field resolves to the kind the called tool stands for')
+await kindlessToolCall.close()
+
+// The inferred kind never overrides an explicit one: a model that names a kind
+// the called tool does not stand for still fails closed.
+const contradictingKindToolCall = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: successfulToolEvents(
+          'booking_run_search',
+          JSON.stringify({ kind: 'hotel.select', input: { hotelRef: 'hotel-1' }, intent: { target: 'hotel.selected' } }),
+          'call-contradicting-kind',
+        ),
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  contradictingKindToolCall.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-contradicting-kind', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_capability_action_mismatch/,
+  'an explicit kind that contradicts the called tool stays rejected',
+)
+await contradictingKindToolCall.close()
+
+// A provider request rejected right after this turn's own schema-shaped
+// rejection is reported as the shape cause, not as the upstream refusing the
+// model request: the model produced a tool call the runtime could not read
+// (hotel-be#35343).
+let shapeRejectedThenProviderRejectedRuns = 0
+const shapeRejectedThenProviderRejected = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      shapeRejectedThenProviderRejectedRuns += 1
+      if (shapeRejectedThenProviderRejectedRuns === 1) {
+        return {
+          finalResponse: '',
+          events: [
+            toolCall('booking_search_hotels', invalidCallArguments, 'call-shape-rejected'),
+            toolResult('call-shape-rejected', true, 'INVALID_ARGS'),
+          ],
+        }
+      }
+      return {
+        finalResponse: '',
+        events: [{ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'INVALID_REQUEST', status: 400, message: 'provider rejected the request' } } } }],
+      }
+    },
+    async close() {},
+  },
+})
+const shapeRejectedThenProviderRejectedDecision = await shapeRejectedThenProviderRejected.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-shape-then-provider-400', workspace, request: { text: 'Find hotels' } },
+})
+assert.deepEqual(shapeRejectedThenProviderRejectedDecision[0], {
+  kind: 'error',
+  error: {
+    code: 'PLANNER_SCHEMA_SHAPE_INVALID',
+    message: 'The planner produced a tool call whose arguments did not match the declared schema.',
+    retryable: false,
+  },
+}, 'a provider rejection right after an unresolved schema rejection is reported as the shape cause')
+await shapeRejectedThenProviderRejected.close()
+
 let repeatedSchemaRejectionRuns = 0
 const repeatedSchemaRejections = await createDshEmbeddedBookingPlanner({
   runPort: {
@@ -1968,6 +2061,7 @@ for (const [code, message] of [
   ['PLANNER_PROVIDER_UNAVAILABLE', 'The planner provider is temporarily unavailable.'],
   ['PLANNER_PROVIDER_REQUEST_REJECTED', 'The planner provider rejected the model request.'],
   ['PLANNER_PROVIDER_RESPONSE_INVALID', 'The planner provider returned an invalid response.'],
+  ['PLANNER_SCHEMA_SHAPE_INVALID', 'The planner produced a tool call whose arguments did not match the declared schema.'],
   ['PLANNER_CONFIGURATION_INVALID', 'The planner provider configuration is invalid.'],
 ] as const) {
   assert.equal(normalizeBookingErrorCode(code.toLowerCase()), code, `${code} survives the closed error-code registry`)
