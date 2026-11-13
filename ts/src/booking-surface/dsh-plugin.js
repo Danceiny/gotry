@@ -20,6 +20,7 @@ import {
   dshBookingActionSchemaForKind,
   dshBookingIntentProjectionSchema,
 } from './canonical-schema.js'
+import { EMBEDDED_BOOKING_ACTION_TOOLS, bookingToolCallWithKind } from './profile.ts'
 
 export const name = 'gotry-embedded-booking'
 export const inject = ['tools']
@@ -279,9 +280,13 @@ function typedActionTool(toolName, kind) {
       // absent from the advertised schema. Validation is dispatched by the
       // tool's single known kind so one local mistake does not expand into
       // dozens of union errors.
-      const legacyEnvelope = normalizeProviderDecisionEnvelope(args)
-      const proposal = compactProposal(args, legacyEnvelope)
-      const candidate = proposal ?? validationCandidate(args)
+      // The tool name is the authority for that kind: a model that omits the
+      // redundant `kind` field gets the kind the called tool stands for
+      // instead of losing the whole turn (hotel-be#35343).
+      const toolArgs = bookingToolCallWithKind(args, kind)
+      const legacyEnvelope = normalizeProviderDecisionEnvelope(toolArgs)
+      const proposal = compactProposal(toolArgs, legacyEnvelope)
+      const candidate = proposal ?? validationCandidate(toolArgs)
       const proposalValidatorForCandidate = candidate?.kind === 'terminal'
         ? validateTerminalProposal
         : candidate?.kind === kind
@@ -351,25 +356,12 @@ function finishTurnTool() {
 /**
  * One tool per action kind. The six historical capability tool names survive
  * as the primary kind of their group so provider streams recorded against the
- * grouped tools still parse; the remaining kinds gained dedicated tools.
+ * grouped tools still parse; the remaining kinds gained dedicated tools. The
+ * tool-to-kind registry itself lives in the profile module, which is also what
+ * the parent planner reads.
  */
-const EMBEDDED_ACTION_TOOLS = [
-  ['booking_search_hotels', 'search.patch'],
-  ['booking_run_search', 'search.run'],
-  ['booking_refine_results', 'results.view.patch'],
-  ['booking_focus_hotel', 'hotel.focus'],
-  ['booking_select_hotel', 'hotel.select'],
-  ['booking_find_room_offers', 'offers.query'],
-  ['booking_view_offers', 'offers.view.patch'],
-  ['booking_compare_offers', 'offers.compare'],
-  ['booking_select_offer', 'offer.select'],
-  ['booking_prepare_booking', 'offer.check'],
-  ['booking_prepare_checkout', 'checkout.prepare'],
-  ['booking_observe_booking', 'order.observe'],
-]
-
 export const embeddedBookingToolDefinitions = Object.freeze([
-  ...EMBEDDED_ACTION_TOOLS.map(([toolName, kind]) => typedActionTool(toolName, kind)),
+  ...EMBEDDED_BOOKING_ACTION_TOOLS.map(([toolName, kind]) => typedActionTool(toolName, kind)),
   finishTurnTool(),
 ])
 
