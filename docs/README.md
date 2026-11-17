@@ -154,6 +154,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 |---|---|
 | [research/maka-research.md](research/maka-research.md) | Apache Maka research → point-by-point mapping onto the ADR-15 five-piece set (draft for decision) |
 | [research/deerflow-research.md](research/deerflow-research.md) | DeerFlow research → optimization goals T1–T4 (issue #10) |
+| [research/dsh-superagent-research.md](research/dsh-superagent-research.md) | dsh-superagent route research → adoption boundary and landing path: repo-dev pilot + AaaS reference (issue #696) |
 | [research/enterprise-travel-reference-study.md](research/enterprise-travel-reference-study.md) | Enterprise travel agent eight-dimension reference study (2026-09-03, sources anonymized) |
 | [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.md) | dsh community plugin selection survey (issue #9) |
 | [research/kimi-postmortem.md](research/kimi-postmortem.md) | Kimi itinerary conversation postmortem: counter-example textbook and ground-truth extraction |
