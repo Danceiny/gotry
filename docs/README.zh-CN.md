@@ -154,6 +154,7 @@
 |---|---|
 | [research/maka-research.md](research/maka-research.zh-CN.md) | Apache Maka 研究 → ADR-15 五件套逐项对照（底稿供拍板） |
 | [research/deerflow-research.md](research/deerflow-research.zh-CN.md) | DeerFlow 研究 → 优化目标 T1–T4（issue #10） |
+| [research/dsh-superagent-research.md](research/dsh-superagent-research.zh-CN.md) | dsh-superagent 路线研究 → 采用边界与落地路径：本仓开发流程 pilot + AaaS 参考（issue #696） |
 | [research/enterprise-travel-reference-study.md](research/enterprise-travel-reference-study.zh-CN.md) | 企业级差旅 Agent 八维参考研究（2026-09-03，来源脱敏） |
 | [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.zh-CN.md) | dsh 社区插件选型调研（issue #9） |
 | [research/kimi-postmortem.md](research/kimi-postmortem.zh-CN.md) | Kimi 行程对话复盘：反例教材与地面真值提取 |
