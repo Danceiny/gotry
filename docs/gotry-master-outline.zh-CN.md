@@ -52,7 +52,7 @@
 | 项目 | 许可证 | 策略 | 在 GoTry 中的角色 | 集成形态 | 主要风险与对策 |
 |---|---|---|---|---|---|
 | **deepseek-harness （dsh）** | MIT | **import** | Agent 运行时基座（harness 层全部） | TS monorepo 直接引入；GoTry 全部领域能力做成 dsh 插件 | dev preview 有破坏性变更 → **已决：不锁版本，跟 main，bet on it**（G2 已关）；升级纳入日常回归 |
-| **loopx** | MIT | **import** | 长程任务控制平面：TripState 的 objective/gates/evidence/quota；**异步深度规划的执行面**（见 3.6） | Python CLI/JSON，由 dsh 插件经子进程调用；零依赖，桥接成本低 | TS↔Python 跨语言 → 桥接面收敛为 trip-state + async-planner 两个插件 |
+| **loopx** | Apache-2.0 | **import** | 长程任务控制平面：TripState 的 objective/gates/evidence/quota；**异步深度规划的执行面**（见 3.6） | Python CLI/JSON，由 dsh 插件经子进程调用；零依赖，桥接成本低 | TS↔Python 跨语言 → 桥接面收敛为 trip-state + async-planner 两个插件 |
 | **Z3** | MIT | **import** | 可行性引擎的约束求解器（不自研求解器） | Python 包（z3-solver），作为 feasibility 插件的库依赖 | 求解超时 → 约束规模上限 + 超时降级为规则校验 |
 | **ai-agent-book** | Apache-2.0 | **reference** | 评测方法、记忆与上下文工程的设计参考 | 不引代码 | 书的 demo code 太弱（创始人判断），仅作设计参考；memory 实现基座见 T 系统（3.5） |
 | **T 系统（某企业级差旅 Agent 生产系统，来源脱敏）** | 内部资产 | **bridge + reference** | ①bridge：机票/酒店/偏好/差标等 MCP 工具（脱敏）在 PoC/MVP 期运行时桥接（受 G5 约束）；②reference：双执行、WriteGate、tool-owned dates、可恢复 SSE、**六层后端 memory（见 3.5）**——**只作设计参考，代码与 schema 均不搬用**，GoTry 按 C 端休闲旅行域自行实现 | MCP 协议桥（运行时调用，不引代码） | 内部资产不可代码级使用（创始人明确）；企业差旅域语义（差标/审批/部门）不宜照搬进 C 端 |
