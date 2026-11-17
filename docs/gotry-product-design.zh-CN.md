@@ -572,7 +572,7 @@ Agent 层   ReAct 编排(对话) + 确定性流程 DAG 调度 + WriteGate(双执
 |---|---|---|---|
 | 1 | [layla.ai](https://layla.ai/) | 商业 AI 旅行规划（柏林，~25 人；2026-07 被 Expedia 收购）；freemium + $49/年；AI+真人混合 | 赛道与定价锚点；**反面教材**：chat-only、缺地图/总览/引导（Trustpilot/Reddit 实测）→ GoTry 结构化行程的依据。来源：layla.ai、Skift 2026-07-31 报道、Expedia IR、Trustpilot |
 | 2 | [liketrek/TREK](https://github.com/liketrek/TREK) | 开源自托管旅行规划器（NestJS+React；AGPL v3）；150+ MCP 工具、细粒度 scope、限流 | 「应用为体、AI 为用」：领域操作工具化 + 权限模型；功能 checklist（地图/拖拽/导入/协作）；**代码不可直接商用（AGPL）** |
-| 3 | [huangruiteng/loopx](https://github.com/huangruiteng/loopx)（zread 页超时，读 GitHub README） | 长程任务状态内核与本地控制平面：objective/gates/todos/evidence/quota；「验证后才花费」 | TripState 长程状态模型（7.6）：显式 user gate、evidence、quota-gated loop（C 端成本治理） |
+| 3 | [loopx-project/loopx](https://github.com/loopx-project/loopx)（zread 页超时，读 GitHub README） | 长程任务状态内核与本地控制平面：objective/gates/todos/evidence/quota；「验证后才花费」 | TripState 长程状态模型（7.6）：显式 user gate、evidence、quota-gated loop（C 端成本治理） |
 | 4 | 某企业级差旅 Agent 系统（T 系统，生产运行，来源脱敏） | ReAct 编排 + 确定性 DAG 双执行、WriteGate、tool-owned dates、SSE 断线续传、内部 eval 体系、独立评测集 | 7.2 双执行模式、7.3 工具层实践、7.4 WriteGate、7.9 评测形态——生产验证过的直接迁移 |
 | 5 | [bojieli/ai-agent-book](https://github.com/bojieli/ai-agent-book) | 《深入理解 AI Agent》开源书：上下文工程、记忆、工具/MCP、评测、多 agent；「Harness 工程才是竞争力」 | 7.6 记忆分层框架、7.7 上下文压缩、7.9 eval-driven 方法论 |
 | 6 | [旅行规划 AI Agent 论文解读（知乎）](https://zhuanlan.zhihu.com/p/11161530566)（微信原文被拦截，以此为主源） | TravelPlanner benchmark + LLM+Z3 混合求解论文解读 | 7.5 可行性引擎的直接依据：纯 LLM 4.4% vs 混合 93%+；unsat core → 最小修改建议 |
