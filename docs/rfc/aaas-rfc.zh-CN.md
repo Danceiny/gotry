@@ -170,6 +170,7 @@ lease record: { key: "<org_id>/<tenant_id>", owner: <replica_id>, epoch: <int>, 
 - **目标。** 专用 gotry 层：内网上 N ≥ 2 个副本，位于 BFF 之后。任一副本都可接收请求，并转发给该租户的 owner，或在租约空闲时自己获取所有权。租户的 planner 会话在其 owner 副本上运行。
 - **路由。** 在 BFF 或 gotry 侧路由器上按 `tenant_id` 做租户亲和的一致性哈希，压低所有权抖动。
 - **边界。** 一条新 ADR 为该层取代 C2：绑定内网地址、按组织的凭证、永不进公网 nginx、永不被浏览器触达（C16 不变）。若持久化介质需要 sidecar，同一条 ADR 一并修订 C1。
+- **边界 ADR 状态（2026-11-17）。** 已起草为 ADR-27，见 [ADR 展开](../adr-expansions.zh-CN.md) §8.27——状态：draft，待 founder 接受；生产鉴权形态与 Litestream 引入已排入[决策队列](../decisions-needed.zh-CN.md)。
 - **桥。** 同一租约模式按组织应用。落到任一副本的扩展长轮询都转发给该组织的桥 owner。job 匹配增加「组织相同」条件。
 - **可观测性。** 以 HMAC id 为键的按租户、按组织指标，租约与 epoch 事件，复制延迟，以及配额拒绝；不含 PII。
 - **滚动发布。** 所有权只在 schema 与特性集兼容的副本之间移动，遵循 ADR-23 的交集规则。

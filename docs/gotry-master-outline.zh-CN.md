@@ -62,6 +62,7 @@
 | **TREK** | AGPL-3.0 | **reference + rewrite（照着重写）** | 行程规划器的设计蓝本：Day planner/地图/预算/协作的功能面；trip/day/place/budget 领域工具 schema（150+ 工具、细粒度 OAuth scope、限流） | **已决：照着重写**（G3 已关）——以功能面与 schema 设计为参考自行实现，不引代码、不自托管 | AGPL 禁止 import；重写纪律：参考设计与 schema，**不逐行翻译源码** |
 | **layla.ai** | 商业闭源 | reference | 竞品与定价锚点，无代码复用 | — | — |
 | 小红书 / 圆周轨迹 | 平台/闭源 | reference | 共享经验层（D1 §6.6）的形态参照与差异化对象：民间智慧密度高但非结构化 | 数据不可引；冷启动只做事实断言的人工提炼，不搬运内容（版权红线） | 形态可学，数据自建 |
+| **Litestream** | Apache-2.0 | **import** *（提案——待 founder 拍板，见 decisions-needed）* | AaaS A3 的异地持久化介质（模式 D-a）：把每个租户账本的 WAL 以按 epoch 分区的副本流式复制到 hotelbyte S3 兼容存储（边界正文：ADR-27，adr-expansions §8.27） | 独立 sidecar 守护进程，与 `gotry-backend` 同主机部署（ADR-27 对 C1 的成文修订）；绝不链接进 gotry 代码，无 npm/TS 依赖，不接触内核清单 | 按租户、按 epoch 的动态副本路径依赖事实 F-3（hotelbyte 存储的条件写语义）→ F-3 是设计前置；删除语义 → 已声明的保留窗口加「不得跨 forget 回退」规则是 A3 前置 |
 
 矩阵结论：**复用矩阵中不再有许可证硬阻塞**——open-source（MIT/Apache）直接 import；内部资产 bridge 运行时；AGPL 项目（TREK）与内部代码（T 系统）一律照着重写。内核清单已冻结（2026-09-11，issue #234，PR 待链）：GoTry 内核模块面（引擎/账本/闸，5 个文件，宁窄勿宽，逐项带 architecture §/ADR 依据）机械化为 SHA256 冻结清单 + 运行模块证据闸（run-all §63）——内核漂移（改动/删除/绕过/未加载）即红；仅工程复用证据，M6 实施门仍以 #137 为前提。
 
