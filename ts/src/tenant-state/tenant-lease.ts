@@ -32,6 +32,13 @@ export interface MonotonicClock {
 
 export const systemMonotonicClock: MonotonicClock = { nowMs: () => performance.now() }
 
+/** A refusal of the synchronous write gate: the tenant, the epoch and why the gate closed. No personal data. */
+export interface FenceEvent {
+  readonly key: string
+  readonly epoch: number
+  readonly reason: FenceReason
+}
+
 export interface TenantLeaseOptions {
   readonly store: LeaseStore
   readonly key: string
@@ -41,6 +48,8 @@ export interface TenantLeaseOptions {
   /** The agreed clock-skew and scheduling bound; the holder stops this long before the store would admit anyone else. */
   readonly marginMs: number
   readonly clock?: MonotonicClock
+  /** Observes every refusal of the write gate where it happens. A broken observer never changes the outcome. */
+  readonly onFence?: (fence: FenceEvent) => void
 }
 
 type HolderState = 'held' | 'released' | 'lost'
@@ -53,6 +62,7 @@ export class TenantLease {
   readonly forgottenAtEpoch: number
   private readonly store: LeaseStore
   private readonly clock: MonotonicClock
+  private readonly onFence: ((fence: FenceEvent) => void) | undefined
   private readonly ttlMs: number
   private readonly marginMs: number
   private fenceAtMs: number
@@ -66,6 +76,7 @@ export class TenantLease {
     this.forgottenAtEpoch = record.forgottenAtEpoch
     this.store = options.store
     this.clock = clock
+    this.onFence = options.onFence
     this.ttlMs = options.ttlMs
     this.marginMs = options.marginMs
     this.fenceAtMs = fenceAtMs
@@ -97,9 +108,9 @@ export class TenantLease {
 
   /** The synchronous gate of the write path. */
   assertHeld(): void {
-    if (this.state === 'released') throw this.fenced('lease_released')
-    if (this.state === 'lost') throw this.fenced('lease_lost')
-    if (this.clock.nowMs() >= this.fenceAtMs) throw this.fenced('lease_expired_locally')
+    if (this.state === 'released') this.refuse('lease_released')
+    if (this.state === 'lost') this.refuse('lease_lost')
+    if (this.clock.nowMs() >= this.fenceAtMs) this.refuse('lease_expired_locally')
   }
 
   isHeld(): boolean {
@@ -160,6 +171,18 @@ export class TenantLease {
   async markForgotten(): Promise<LeaseRecord> {
     this.assertHeld()
     return this.store.markForgotten(this.key, this.replicaId, this.epoch)
+  }
+
+  /** Reports the gate refusal first — a broken observer must never change the outcome — then throws the error the gate always threw. */
+  private refuse(reason: FenceReason): void {
+    if (this.onFence) {
+      try {
+        this.onFence({ key: this.key, epoch: this.epoch, reason })
+      } catch {
+        // Ignored on purpose.
+      }
+    }
+    throw this.fenced(reason)
   }
 
   private fenced(reason: FenceReason): FencedError {

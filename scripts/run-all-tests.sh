@@ -796,6 +796,14 @@ echo
 echo "=== 101. AaaS 交接正确性(#674 A1 后续,docs/rfc/aaas-rfc.md §4.2 第 6 条,威胁 S-6 与 S-12;一次独立审查指出 A1 的优雅交接会丢失已确认的写入:H 交接——在最终镜像取走之后经账本写入的内容被拒绝(带类型的 draining 错误),而不是被确认后丢失,后继 owner 的账本含有每一条已确认的写入;最终刷盘期间账本视图对读写都关闭,刷盘失败则重新开放并继续服务;租约失效之后才落地的刷盘按失败报告(FencedError、不发 flushed 的 released 事件,'snapshot_failed' 与成功区分),后继在上传期间接管时它保留自己钉住的基线;排空在途工作期间租约持续续期(真实计时器:工作长于租约时交接仍把它刷进最终镜像);交接失败后恢复服务不会产生第二条续期链;被 abandon 抢先的交接保持 abandon(不刷盘、不复活句柄);V 受守卫的数据库——exec 与 defaultSafeIntegers 等返回数据库本身的方法不再交出原始数据库,租约失效后链式调用仍被拦;F forget——正在进行的快照上传先完成再随其余副本一起被删(存储里不剩租户的镜像、清单或基线,本地文件也不剩),forget 开始后请求的快照被拒;O 观察者——抛错的 onEvent 不会让 openTenant 失败也不会占住租约;L 本地文件——刷完一切的交接删除本副本的本地账本文件,被放弃的租期保留文件,直到同一副本上的下一次 open 用持久副本替换它;D 排空——排空有截止时间(永不返回的在途调用让交接以带类型的 DrainTimeoutError 被拒、发 drain_timeout 事件、租户继续服务),close() 同时交接多个租户使一个卡住的租户不拖住后面的(drainTimeoutMs 与 closeConcurrency 的非法值被拒,并发为 1 时回到逐个交接),abandon·forget·租约丢失都会结束一个正在等待的交接,排空期间新来的调用被带类型的 draining 错误拒绝而在途工作照常完成并进入最终镜像,abandon 进行中的调用同样被拒;R 续期——交接失败后恢复服务,即使某次续期还没返回也不会再起第二条续期链;T run()——返回 promise 的回调被拒绝,它留下的 promise 不会变成未处理的 rejection;F 补充——forget 与正在刷盘的交接竞争时获胜(交接不释放租约、不报已刷写),forget 等待上传期间持续续期因而不会被围栏,等待期间的调用得到带类型的 draining 错误,期间的 abandon 不会把租约从它脚下释放、第二次 forget 被拒,abandon 进行中的 forget 同样被拒,forget 只删自己抬高的下限及以下的 epoch(期间接管的后继保住自己写的内容),关闭路由器时会等待正在进行的 forget;V 补充——视图上的 db.close() 不会关掉路由器自己的连接,原始数据库不会经属性描述符泄漏,视图只读且不能被冻结或改原型;S 作废 epoch——打开曾被 forget 的租户时在 open 旁边清扫被取代的 owner 在 forget 之后才上传的副本,而不碰别的租户,清扫失败不会让 open 失败、下次 open 再扫;P 路径——forgetTenant 拒绝不是该租户自己的目录且删除的就是检查过的那条路径(symlink 后的 .. 带不走它),丢弃本地账本同样受守卫,按前缀删除只接受完整分段(acme/ 带不走 acme2/),共用同一个 state root 的两个副本中后继的恢复换了文件、旧写者被围栏;对 48 处守卫逐一变异均使套件变红(tenant-state-handoff-mutations.json);全离线,隔离 mkdtemp,不碰任何共享状态) ==="
 (cd ts && npx tsx scripts/tenant-state-handoff-tests.ts) || FAIL=1
 
+echo
+echo "=== 102. AaaS 租户路由器的空闲释放(#674 A3,docs/rfc/aaas-rfc.md §4.8(g);位于内核之外,不带 idleReleaseMs 构造的路由器逐字不变:到点释放走的是现有 handoff 的平凡路径——排空·最终快照·释放租约,不发明第二条销毁路径;空闲=无在途 runAsync 工作且距最后一次经句柄的活动(run·runAsync·受守卫账本上的任何调用)超过阈值,由注入的单调时钟裁决,定时器只负责唤醒;满载副本在空闲租户到点释放后新租户即可打开,槽位未释放前仍抛 ReplicaAtCapacityError;在途工作绝不被打断,租户在工作结束后的下一个完整空闲周期才被释放;活动把空闲周期从头重计;空闲交接失败(存储断开)的租户继续服务,不早于又一个完整空闲周期才重试;idleReleaseMs 为 0 或缺省时行为不变,非法值在构造时拒绝;全离线,手摇时钟裁决·真实定时器只唤醒,隔离 mkdtemp,不碰任何共享状态) ==="
+(cd ts && npx tsx scripts/tenant-router-idle-release-tests.ts) || FAIL=1
+
+echo
+echo "=== 103. AaaS 状态层可观测性骨架(#674 A3,docs/rfc/aaas-rfc.md §4.5;位于内核之外,纯新增,零第三方依赖:进程内 hub 的订阅面携带全部九种 RouterEvent·typed 的写门围栏拒绝·配额 429 拒绝(scope·dimension·limit·重试提示,不落明文主体)·open-slot gauge·持久副本发布的 lag 钩子(DurableStore 不带时间元数据,由调用侧在 publishSnapshot 前后测量,失败以 seq null 结清),快照按事件类型·围栏原因·配额维度分桶计数;键一律是 HMAC 租户 id 与组织 id,无 PII;单回调的 onEvent/onFence/onRefusal 槽位由组合器合并 hub 与部署自己的观察者而不改任何签名,抛错的观察者或订阅者绝不改变层的结论;配额拒绝点与路由器 onFence 通向租约的接线在不改既有行为与签名的前提下最小完成;全离线,手摇时钟,隔离 mkdtemp,不碰任何共享状态) ==="
+(cd ts && npx tsx scripts/aaas-observability-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

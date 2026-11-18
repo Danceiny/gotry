@@ -55,6 +55,14 @@ export class QuotaExceededError extends TenantStateError {
   }
 }
 
+/** A refusal as an observer sees it, the same facts the typed error carries: no personal data. */
+export interface QuotaRefusalEvent {
+  readonly scope: QuotaScope
+  readonly dimension: QuotaDimension
+  readonly limit: number
+  readonly retryAfterMs: number
+}
+
 export interface RateLimit {
   readonly limit: number
   readonly windowMs: number
@@ -129,6 +137,8 @@ export interface TenantQuotasOptions {
   readonly model: string
   /** Monotonic milliseconds. Suites drive it by hand. */
   readonly clock?: () => number
+  /** Observes every refusal where it happens, with the same facts the typed error carries. A broken observer never changes the outcome. */
+  readonly onRefusal?: (refusal: QuotaRefusalEvent) => void
 }
 
 /** A rolling window of amounts: the sum of what was added in the last `windowMs`. */
@@ -240,6 +250,7 @@ export class TenantQuotas {
   private readonly policy: QuotaPolicy
   private readonly priceTable: LlmPriceTable
   private readonly clock: () => number
+  private readonly onRefusal: ((refusal: QuotaRefusalEvent) => void) | undefined
   private readonly tenants = new Map<string, Account>()
   private readonly organizations = new Map<string, Account>()
   private globalActive = 0
@@ -251,6 +262,7 @@ export class TenantQuotas {
     this.policy = options.policy
     this.priceTable = options.priceTable
     this.clock = options.clock ?? (() => performance.now())
+    this.onRefusal = options.onRefusal
   }
 
   /**
@@ -409,13 +421,26 @@ export class TenantQuotas {
   private refuseIfOver(account: Account, scope: QuotaScope, dimension: QuotaDimension, used: number, limit: number, retryAfterMs: number): void {
     if (used < limit) return
     account.rejected[dimension] += 1
+    this.noteRefusal(scope, dimension, limit, retryAfterMs)
     throw new QuotaExceededError(scope, dimension, limit, retryAfterMs)
   }
 
   private refuseIfOverRolling(account: Account, scope: QuotaScope, dimension: QuotaDimension, window: RollingSum, now: number, limit: number, unit = 1): void {
     if (window.sum(now) < limit) return
+    const retryAfterMs = window.msUntilBelow(now, limit)
     account.rejected[dimension] += 1
-    throw new QuotaExceededError(scope, dimension, limit / unit, window.msUntilBelow(now, limit))
+    this.noteRefusal(scope, dimension, limit / unit, retryAfterMs)
+    throw new QuotaExceededError(scope, dimension, limit / unit, retryAfterMs)
+  }
+
+  /** Reports a refusal to the optional observer — a broken observer never changes the outcome. */
+  private noteRefusal(scope: QuotaScope, dimension: QuotaDimension, limit: number, retryAfterMs: number): void {
+    if (!this.onRefusal) return
+    try {
+      this.onRefusal({ scope, dimension, limit, retryAfterMs })
+    } catch {
+      // Ignored on purpose.
+    }
   }
 
   private maybeSweep(now: number): void {
