@@ -33,6 +33,7 @@ import { join } from 'node:path'
 
 import { Context } from '@deepseek-ai/cordis'
 import { ToolRuntime, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import { apply as applyNativeToolExecutor, inject as nativeToolExecutorInject, name as nativeToolExecutorName } from '@deepseek-ai/dsh-tool-executor-native'
 import { renderPrompt, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { parse as parseYaml } from 'yaml'
 import { apply } from '../src/index.ts'
@@ -72,13 +73,21 @@ function loadPersonaPrefix(): string {
 }
 
 let toolCall = 0
-function runTool(ctx: Context, name: string, args: unknown): Promise<ToolExecutionResult> {
-  return ctx.tools.execute({
-    callId: `issue-338-${++toolCall}-${name}` as never,
-    name,
-    arguments: args,
+async function runTool(ctx: Context, name: string, args: unknown): Promise<ToolExecutionResult> {
+  // dsh 0.2.2: ToolRuntime.execute moved to the batch contract; settle the
+  // single programmatic call like the previous per-call result.
+  const batch = await ctx.tools.execute({
+    calls: [{
+      type: 'tool-call',
+      id: `issue-338-${++toolCall}-${name}` as never,
+      name,
+      arguments: JSON.stringify(args ?? {}),
+    }],
     signal: new AbortController().signal,
   })
+  const settled = batch.results[0]?.result
+  if (!settled) throw new Error(`${name} produced no result`)
+  return settled
 }
 
 function resultValue<T>(result: ToolExecutionResult): T {
@@ -95,6 +104,8 @@ async function bootPlugin(stateRoot: string, personaPrefix = ''): Promise<Plugin
   const ctx = new Context()
   await ctx.plugin(SystemPrompt, { personaPrefix })
   await ctx.plugin(ToolRuntime, {})
+  // dsh 0.2.2: bare composition needs the native executor for tools.execute.
+  await ctx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
   apply(ctx, {
     stateRoot,
     timeoutMs: 30_000,

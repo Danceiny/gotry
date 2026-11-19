@@ -121,9 +121,9 @@ function assertTargetLockClosure(): { packages: number; version: string } {
   )
   assert.ok(dshEntries.length >= 10, 'expected dsh-tools peer closure in the ts lock')
   for (const [path, entry] of dshEntries) {
-    assert.equal(entry.version, '0.2.0-rc.2', `${path} drifted outside the 0.2.0-rc.2 closure`)
+    assert.equal(entry.version, '0.2.2-rc.3', `${path} drifted outside the 0.2.2-rc.3 closure`)
   }
-  return { packages: dshEntries.length, version: '0.2.0-rc.2' }
+  return { packages: dshEntries.length, version: '0.2.2-rc.3' }
 }
 
 function findPackageRoot(entry: string): string {
@@ -244,8 +244,8 @@ try {
   const dshSettingsPackageJson = packageRequire.resolve('@deepseek-ai/dsh-settings/package.json')
   const dshTools = JSON.parse(readFileSync(dshToolsPackageJson, 'utf8')) as { version: string }
   const dshSettings = JSON.parse(readFileSync(dshSettingsPackageJson, 'utf8')) as { version: string }
-  assert.equal(dshTools.version, '0.2.0-rc.2')
-  assert.equal(dshSettings.version, '0.2.0-rc.2')
+  assert.equal(dshTools.version, '0.2.2-rc.3')
+  assert.equal(dshSettings.version, '0.2.2-rc.3')
   const settingsApi = await import(pathToFileURL(join(dirname(dshSettingsPackageJson), 'lib/index.js')).href) as {
     SettingsForms?: { prototype?: { configure?: (...args: unknown[]) => () => void } }
   }

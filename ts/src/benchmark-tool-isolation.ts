@@ -84,7 +84,8 @@ export function installBenchmarkToolIsolation(ctx: Context): void {
       if (!agent) throw new Error('benchmark environment created agent unavailable')
       if (typeof tools?.restrict !== 'function') throw new Error('benchmark environment scoped restrict unavailable')
       if (typeof tools.guard !== 'function') throw new Error('benchmark environment scoped guard unavailable')
-      if (typeof tools.presentAs !== 'function') throw new Error('benchmark environment scoped presentAs unavailable')
+      // dsh 0.2.2 removed the scoped presentAs selector (presentation moved to
+      // executor-owned sections); native presentation is the only mode here.
       if (typeof agentEffect !== 'function') throw new Error('benchmark environment scoped effect unavailable')
       if (typeof agentOn !== 'function') throw new Error('benchmark environment scoped event bus unavailable')
       if (active.has(agent)) throw new Error('benchmark environment duplicate agent isolation')
@@ -109,7 +110,9 @@ export function installBenchmarkToolIsolation(ctx: Context): void {
           if (stopping) throw new Error(SURFACE_VIOLATION)
           return result
         }, { prepend: true }), 'scoped assembly listener')
-        yield requireDisposer(tools.presentAs!('native'), 'scoped presentAs')
+        if (typeof tools.presentAs === 'function') {
+          yield requireDisposer(tools.presentAs('native'), 'scoped presentAs')
+        }
         yield requireDisposer(tools.restrict!({ allow: [BRIDGE_TOOL] }), 'scoped restrict')
       }, 'benchmark-environment-agent-tool-isolation'), 'scoped effect')
       active.set(agent, owned)

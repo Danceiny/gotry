@@ -35,7 +35,7 @@
 
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolExecutionInput, ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { ToolBatchInput, ToolRunContext } from '@deepseek-ai/dsh-tools'
 
 import { sanitizeFaultDetail } from './provider-detail-sanitize.ts'
 
@@ -821,16 +821,21 @@ export function createPublicMapDrivingRouteProvider(ctx: Context): GroundTransfe
     if (!tools.get('map_driving_route', execution.agent)) {
       throw new Error('GROUND_TRANSFER_PUBLIC_MAP_TOOL_UNAVAILABLE: map_driving_route is not registered in the current tool scope')
     }
-    const nested: ToolExecutionInput = {
-      callId: ToolCallId(`${String(execution.callId)}:ground-transfer`),
-      rootCallId: execution.rootCallId,
-      name: 'map_driving_route',
-      arguments: { origin: request.origin, destination: request.destination },
-      ...(execution.agent !== undefined ? { agent: execution.agent } : {}),
-      parent: execution.token,
+    // dsh 0.2.2: nested dispatch moved to the batch contract — one synthetic
+    // tool-call block through the public executor, scoped by the owning agent.
+    const nested: ToolBatchInput = {
+      calls: [{
+        type: 'tool-call',
+        id: ToolCallId(`${String(execution.callId)}:ground-transfer`),
+        name: 'map_driving_route',
+        arguments: JSON.stringify({ origin: request.origin, destination: request.destination }),
+      }],
       signal: execution.signal,
+      ...(execution.agent !== undefined ? { agent: execution.agent } : {}),
     }
-    const result = await tools.execute(nested)
+    const batch = await tools.execute(nested)
+    const result = batch.results[0]?.result
+    if (!result) throw new Error('map_driving_route failed: executor returned no result')
     if (result.isError) throw new Error(`map_driving_route failed: ${result.error.message}`)
     return parseRouteResult(result.value)
   }

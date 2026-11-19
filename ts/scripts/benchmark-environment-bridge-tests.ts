@@ -1038,7 +1038,10 @@ try {
   assert.equal(denied?.includes('/private/secret'), false)
   assert.equal(denied?.includes('secret'), false)
   assert.equal(guard({ name: 'other_tool', args: { different: true } }), denied, 'denial reason is stable')
-  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: { restrict(filter) { void filter }, guard(check) { void check } } } } }), /presentAs/, 'missing scoped presentAs fails hard')
+  // dsh 0.2.2 removed the scoped presentAs selector (presentation moved to
+  // executor-owned sections), so a restrict+guard-only scoped context now first
+  // fails at the scoped effect — the dedicated /presentAs/ case is gone.
+  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: { restrict(filter) { void filter }, guard(check) { void check } } } } }), /effect/, 'scoped context without effect fails hard')
   assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: scopedTools } } }), /effect/, 'missing scoped effect fails hard')
   assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: scopedTools, effect: (action: () => unknown) => runEffect(action) } } }), /event bus/, 'missing scoped event bus fails hard')
   assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: { guard: guards[0] } } } }), /restrict/, 'missing scoped restrict fails hard')

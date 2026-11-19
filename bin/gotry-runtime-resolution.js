@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-export const REQUIRED_BENCHMARK_DSH_VERSION = '0.2.0-rc.2'
+export const REQUIRED_BENCHMARK_DSH_VERSION = '0.2.2-rc.3'
 
 export function readDshPackage(bin) {
   try {

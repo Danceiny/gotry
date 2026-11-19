@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolRuntime, defineTool } from '@deepseek-ai/dsh-tools'
+import { apply as applyNativeToolExecutor, inject as nativeToolExecutorInject, name as nativeToolExecutorName } from '@deepseek-ai/dsh-tool-executor-native'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { ApprovalService } from '@deepseek-ai/dsh-user-approval'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { approvalFromContext, createConsentGate } from '../capabilities/session-consent.ts'
 import {
@@ -22,6 +24,22 @@ type Result = {
   value?: unknown
   content: Array<{ type: string; text?: string }>
   additionalContexts?: Array<{ content?: Array<{ type?: string; text?: string }> }>
+}
+// dsh 0.2.2: ToolRuntime.execute moved to the batch contract; settle one
+// programmatic call like the previous per-call result.
+const executeCall = async (
+  tools: InstanceType<typeof ToolRuntime>,
+  name: string, args: unknown, callId: string, agent?: Agent,
+): Promise<Result> => {
+  const batch = await tools.execute({
+    calls: [{ type: 'tool-call', id: callId as never, name, arguments: JSON.stringify(args ?? {}) }],
+    ...(agent !== undefined ? { agent } : {}),
+    signal: new AbortController().signal,
+  })
+  const settled = batch.results[0]?.result as Result | undefined
+  if (!settled) throw new Error(`${name} produced no result`)
+  const contexts = settled.additionalContexts ?? batch.additionalContexts as unknown as Result['additionalContexts']
+  return { ...settled, additionalContexts: contexts }
 }
 type PostDecision = { kind: 'accept'; additionalContexts?: Result['additionalContexts'] }
 type ExecuteListener = (exec: FakeExecution, next: () => Promise<Result>) => Promise<Result>
@@ -288,6 +306,8 @@ for (const [registration, writeFailure] of [['global', false], ['scoped', false]
   const runtimeCtx = new Context()
   runtimeCtx.provide('systemPrompt', { tools() {} })
   const tools = new ToolRuntime(runtimeCtx)
+  // dsh 0.2.2: bare composition needs the native executor for tools.execute.
+  await runtimeCtx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
   let time = 0
   const mutableAgent = { id: registration, ctx: runtimeCtx, session: { id: registration, header: { cwd: root }, snapshotEvents: () => [] } }
   const agent = mutableAgent as unknown as Agent
@@ -304,7 +324,7 @@ for (const [registration, writeFailure] of [['global', false], ['scoped', false]
     assert.ok(tools.get('write', agent), 'write is visible before deadline dispatch')
     runtimeCtx.emit('session/event', agent.session, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'plan my trip' }] } } as never)
     time = 11
-    const call = () => tools.execute({ name: 'write', agent, arguments: {}, callId: 'draft' as never, signal: new AbortController().signal })
+    const call = () => executeCall(tools, 'write', {}, 'draft', agent)
     const result = await call()
     assert.equal(result.isError, writeFailure, `${registration} pending write keeps its actual registry outcome: ${JSON.stringify(result)}`)
     if (writeFailure) {
@@ -462,7 +482,13 @@ async function withApprovalPipeline(
   const runtimeCtx = new Context()
   runtimeCtx.provide('systemPrompt', { tools() {}, context() {}, getContextOrder: () => 0 })
   const tools = new ToolRuntime(runtimeCtx)
-  new ApprovalService(runtimeCtx, { policy: 'ask' })
+  // dsh 0.2.2: bare composition needs the native executor for tools.execute.
+  await runtimeCtx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
+  // dsh 0.2.2: ApprovalService.init registers its turn-enclosed approval
+  // projection, and cordis 4.1 schedules Service.init through the plugin
+  // lifecycle, so both services load via plugin() in this bare composition.
+  await runtimeCtx.plugin(SessionProjectionRegistry)
+  await runtimeCtx.plugin(ApprovalService, { policy: 'ask' })
   let time = 0
   let searches = 0
   let started = 0
@@ -487,7 +513,9 @@ async function withApprovalPipeline(
     startHandoff: async ticket => { started++; return { ...ticket, status: 'running', jobId: 'gotry-planning-1' } } })
   runtimeCtx.on('tools/pre-execute', createConsentGate({ access: () => 'ask', approval: approvalFromContext(runtimeCtx) }) as never)
   const answerers: Array<(decide: (outcome: 'allowed-once' | 'rejected') => void) => void> = []
-  runtimeCtx.on('approval/request', () => new Promise(resolve => answerers.shift()?.(resolve)))
+  // dsh 0.2.2: approval/request dispatches through a scope-targeted
+  // waterfall on the agent's scoped context, not the root context.
+  ;(scope.ctx as typeof runtimeCtx).on('approval/request', () => new Promise(resolve => answerers.shift()?.(resolve)))
   tools.register(defineTool({
     name: 'gotry_session_search', description: 'Read-only account-session search',
     parameters: { from: { type: 'string' }, to: { type: 'string' }, date: { type: 'string' }, kind: { type: 'string' }, ui: { type: 'string' } },
@@ -500,8 +528,8 @@ async function withApprovalPipeline(
     await run({
       root, events,
       advance: ms => { time += ms },
-      search: callId => tools.execute({ name: 'gotry_session_search', agent, callId: callId as never, signal: new AbortController().signal,
-        arguments: { from: '迪拜', to: '香港', date: '2026-12-01', kind: 'flight', ui: 'gui' } }) as Promise<Result>,
+      search: callId => executeCall(tools, 'gotry_session_search',
+        { from: '迪拜', to: '香港', date: '2026-12-01', kind: 'flight', ui: 'gui' }, callId, agent),
       searches: () => searches,
       asked: () => new Promise(resolve => answerers.push(resolve)),
       started: () => started,
