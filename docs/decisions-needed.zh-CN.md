@@ -8,7 +8,7 @@
 > 下游：按回执推进的实现/Exit 证据与 issue gate 更新；founder YES 只满足对应决策门，不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回；按回执推进。
 
-**速览：2 项在追——生产鉴权器形态（mTLS vs 签名断言）与 Litestream 引入与复用矩阵修订，均为 #674 A3 排入的 ADR-27 待拍板项（见下方「未决」节）；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
+**速览：1 项在追——Litestream 引入与复用矩阵修订（#674 A3 排入的 ADR-27 待拍板项，见下方「未决」节）；ADR-27 鉴权器形态已于 2026-11-19 拍板——绑定请求摘要的短时效签名断言（已结算表置顶行）；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
 
 ## 未决
 
@@ -28,10 +28,6 @@
 **仍为触发式——仅真实接入**：真实 bridge/sensor 选型、auth/token 归属与消费者接入，等第一个真实 world2agent 回调方出现再拍（签名/通道绑定）；拍板前真实远程面不开。触发跟踪原为 issue #82（已于 2026-10-05 按「推迟」关闭，本节为权威；首个真实回调方出现时另开 issue）；issue #119 为已关闭的设计记录。
 **位置**：[`design/external-event-seam.md`](design/external-event-seam.md)；决策模板 [`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)；触发跟踪原为 issue #82（已于 2026-10-05 按「推迟」关闭）；设计记录 issue #119（已关闭）。
 
-### ADR-27 生产鉴权器形态（mTLS vs 签名断言）
-
-**Pending（founder；#674 A3 于 2026-11-17 排入）：** ADR-27 草案推荐「按组织凭证 + mTLS」作为默认的生产 `CallerAuthenticator`——信道级强边界（S-7 全覆盖，S-5 的组织等值残余已大部分关闭；S-11 的残余属桥面的 tenant-bearing credential，不在本接缝范围）、不悬在任何未核验的 hotel-be 能力上；更轻的备选「绑定请求摘要的短时效签名断言」（封掉 S-8/S-14 的重放残余）只有在「hotel-be 的 BFF 能签发该断言格式」这一事实核验通过后才可能当选（今天不存在这样的事实；该前置已有跟踪位——[aaas-security-design](design/aaas-security-design.zh-CN.md) §6 的开放问题，不新增全局事实编号）。无论选哪个，共享 bearer key 都以过渡形态存续到生产鉴权器上线（[AaaS RFC](rfc/aaas-rfc.zh-CN.md) §4.4）。决策正文：[ADR 展开](adr-expansions.zh-CN.md) §8.27。
-
 ### ADR-27 Litestream 引入与复用矩阵修订
 
 **Pending（founder；#674 A3 于 2026-11-17 排入）：** ADR-27 草案提案以 Apache-2.0 的 Litestream 作为 A3 持久化 sidecar 引入，附 C1 成文修订、已声明的保留窗口与「不得跨 forget 回退」规则；总纲 §2 矩阵行按提案登记，founder 确认之前不开始任何 import。前置事实：F-3（hotelbyte S3 兼容存储的条件写语义）。提案行：[总纲](gotry-master-outline.zh-CN.md) §2；决策正文：[ADR 展开](adr-expansions.zh-CN.md) §8.27。
@@ -42,6 +38,7 @@
 
 | # | 事项 | 决策 | 结算 |
 |---|---|---|---|
+| ADR-27 | AaaS 生产鉴权器形态 | **绑定请求摘要的短时效签名断言**，由 BFF 按组织签发（生产鉴权器上线前共享 bearer key 以过渡形态存续）。「BFF 能签发哪种断言格式」这一事实（[aaas-security-design](design/aaas-security-design.zh-CN.md) §6 开放问题）是 A3.1 的实装前置；若被证伪，本决定重开。mTLS 为被拒备选（接缝守卫等同，证书运维更重） | ✅ 2026-11-19（founder 在 A3 车道回复拍板；决策正文：[ADR 展开](adr-expansions.zh-CN.md) §8.27） |
 | #674 | AaaS A0 RFC（七个决策） | **按建议接受**：按租户 keyed 单写者（ADR-15 重新表述）；账本 owner 为个人；租约存储为 hotel-be MySQL、每租户一行；持久性 A3 之前用 D-a、AaaS 上启封 M5 之前须 D-b；专用内网层并新增边界 ADR；v1 范围为 `gotry-backend` 服务面；各节点现有的 `local` 账本只读归档、不迁移 | ✅ 2026-10-28（founder 合并 [#675](https://github.com/Danceiny/gotry/pull/675) 并指示 A1 开工） |
 | D-9 | dsh-calendar 分发面 | **默认不挂载**；挂载与否进 setup 状态面（`~/.gotry/calendar.json`，`npx @danceiny/gotry setup calendar` on/off），禁止环境变量控制产品行为（founder 2026-09-03 纠偏）；doctor 增宿主插件节 | ✅ 2026-09-03（ADR-25，run-all §50） |
 | D-8 | 工具编排策略 | **静态平铺 + 健康态驱动的动态建议**：工具面平铺不变、解译器不做隐藏派发；通道健康面 + verdict≠hit 时结果内注入 `routing` 顺位表（可用性>证据级>效率）；persona （19） 收缩为注册表生成片段 | ✅ 2026-09-03（同上） |
