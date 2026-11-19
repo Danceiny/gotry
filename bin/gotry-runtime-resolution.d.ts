@@ -8,7 +8,7 @@ export type DshRuntime = {
   source: 'root'
 }
 
-export const REQUIRED_BENCHMARK_DSH_VERSION: '0.2.0-rc.2'
+export const REQUIRED_BENCHMARK_DSH_VERSION: '0.2.2-rc.3'
 
 export function readDshPackage(bin: string): Omit<DshRuntime, 'source'> | null
 export function resolveDshPackage(resolver: DshResolver): Omit<DshRuntime, 'source'> | null

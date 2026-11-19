@@ -7,7 +7,7 @@
  *   - gotry_wish_pool_add       「下一次出发」清单(憧憬不被拒绝)
  *
  * 插件形态遵循 dsh 约定(name/inject/Config/apply + ctx.tools.register(defineTool(...))),
- * 对齐 @deepseek-ai/dsh-tools@0.2.0-rc.2 的契约:
+ * 对齐 @deepseek-ai/dsh-tools@0.2.2-rc.3 的契约:
  * render 位于 output 对象内,参数属性是 ValueSchemaSpec(支持 type:'json')。
  *
  * @module @gotry/plugin
@@ -104,7 +104,7 @@ async function loadAirlineAirportMap(): Promise<AirlineAirportMap | null> {
 export const name = 'gotry-tools'
 // The benchmark CLI projection adds a required subprocess loader dependency.
 // Keep the plugin's ordinary mode independent of that opt-in-only service.
-export const inject = ['tools', 'systemPrompt']
+export const inject = ['tools', 'systemPrompt', 'agents']
 
 function sessionCwd(exec: unknown): string | undefined {
   const candidate = exec as { agent?: { session?: { header?: { cwd?: unknown } } } } | null

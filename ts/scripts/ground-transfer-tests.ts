@@ -30,6 +30,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { defineTool, ToolRuntime, type ToolExecutionResult, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { apply as applyNativeToolExecutor, inject as nativeToolExecutorInject, name as nativeToolExecutorName } from '@deepseek-ai/dsh-tool-executor-native'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 
 import { apply } from '../src/index.ts'
@@ -156,6 +157,8 @@ async function publicToolExecution(payload: JsonRecord): Promise<PublicToolExecu
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime, {})
+  // dsh 0.2.2: bare composition needs the native executor for tools.execute.
+  await ctx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
   const unregisterMap = ctx.tools.register(defineTool({
     name: 'map_driving_route',
     description: 'isolated public map tool fixture',
@@ -180,12 +183,17 @@ async function publicToolExecution(payload: JsonRecord): Promise<PublicToolExecu
     sessionAccess: 'off',
   }, { clock: () => FIXED_NOW })
 
-  const execution = await ctx.tools.execute({
-    callId: 'issue-341-ground-transfer-root' as ToolCallId,
-    name: 'gotry_feasibility_check',
-    arguments: { payload: clone(payload) },
+  // dsh 0.2.2: ToolRuntime.execute moved to the batch contract; settle the
+  // single programmatic call like the previous per-call result.
+  const execution = (await ctx.tools.execute({
+    calls: [{
+      type: 'tool-call',
+      id: 'issue-341-ground-transfer-root' as ToolCallId,
+      name: 'gotry_feasibility_check',
+      arguments: JSON.stringify({ payload: clone(payload) }),
+    }],
     signal: new AbortController().signal,
-  })
+  })).results[0]!.result
   return {
     execution,
     mapCalls,
@@ -738,6 +746,8 @@ async function main(): Promise<void> {
     const realCtx = new Context()
     await realCtx.plugin(SystemPrompt)
     await realCtx.plugin(ToolRuntime, {})
+    // dsh 0.2.2: bare composition needs the native executor for tools.execute.
+    await realCtx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
     realCtx.tools.register(defineTool({
       name: 'map_driving_route',
       description: 'asymmetric real map tool',
@@ -762,12 +772,15 @@ async function main(): Promise<void> {
       sessionAccess: 'off',
     }, { clock: () => FIXED_NOW })
     try {
-      const realExecution = await realCtx.tools.execute({
-        callId: 'issue-364-asymmetric-root' as ToolCallId,
-        name: 'gotry_feasibility_check',
-        arguments: { payload: clone({ ...taxiOnlyPayload, ground_transfer: GROUND_TRANSFER }) },
+      const realExecution = (await realCtx.tools.execute({
+        calls: [{
+          type: 'tool-call',
+          id: 'issue-364-asymmetric-root' as ToolCallId,
+          name: 'gotry_feasibility_check',
+          arguments: JSON.stringify({ payload: clone({ ...taxiOnlyPayload, ground_transfer: GROUND_TRANSFER }) }),
+        }],
         signal: new AbortController().signal,
-      })
+      })).results[0]!.result
       assert.equal(realExecution.isError, false, `nested tool execution failed: ${realExecution.isError ? realExecution.error.message : ''}`)
       const realResult = resultOf(realExecution.value)
       const realEvidence = asRecord(realResult.ground_transfer, 'real ToolRuntime asymmetric evidence')

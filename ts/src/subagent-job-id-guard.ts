@@ -56,9 +56,12 @@ export function installSubagentJobIdGuard(ctx: Context): void {
     const subagents = subagentsOf(ctx)
     if (!jobId || !agent || !subagents) return next()
 
-    let children: SubagentCatalogEntry[]
+    let children: readonly { kind: string; id: string; mode: string }[]
     try {
-      children = await subagents.listChildren(agent.id as SessionId, exec.signal)
+      // dsh 0.2.2: SubagentRuntime.listChildren was replaced by listDescendants
+      // (public surface; direct+deeper catalog rows carry kind/id/mode).
+      children = (await subagents.listDescendants(agent.id as SessionId, exec.signal))
+        .filter(entry => entry.kind === 'child')
     } catch (error) {
       // The guard is diagnostic, not an alternate ownership or availability
       // path. Preserve cancellation; otherwise retain dsh's native job error.
@@ -66,7 +69,7 @@ export function installSubagentJobIdGuard(ctx: Context): void {
       return next()
     }
 
-    if (!children.some(entry => isContinuableChild(entry, jobId))) return next()
+    if (!children.some(entry => isContinuableChild(entry as unknown as SubagentCatalogEntry, jobId))) return next()
     return { kind: 'deny', reason: recoveryReason(exec.name, jobId) }
   }, { prepend: true })
 }

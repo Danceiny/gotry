@@ -6,7 +6,7 @@
 - **进入本仓的每个 agent/tick 先做异步工单清扫**：`ts/gotry-state/async/` 若有 `*.json` 而无同名 `.deliverable.md`，执行 `cd ts && npx tsx scripts/async-collect.ts <工单id>`（「一小时后回来」的调度闭环由这条驱动）。
 - 分层纪律：算术只在 `model.ts`/`unified.py` 的 evaluate 层；求解只在 `unified.ts`/`unified.py`；engine.*/journey.* 是 deprecated 兼容层，新代码不得调用。改任何一侧必须跑全栈回归（`scripts/run-all-tests.sh`，Python 20/20 + TS 套件全绿）。
 - TS↔Python 无桥：py/gotry_feasibility 仅作历史对照 oracle，产品运行时与工具链零引用；不得新增任何 Python 依赖面。
-- dsh 跟 main（创始人决策）：升级后先跑 `cd ts && npx tsc --noEmit && npx tsx scripts/smoke.ts`。
+- dsh 永远跟最新发布线（创始人决策 2026-11-17：gotry 是实验性项目，不为旧线降速）：升级后先跑 `cd ts && npx tsc --noEmit && npx tsx scripts/smoke.ts`。
 - 文档纪律：单一文件承载单一关注点，版本历史归 git，不设 vN 后缀；GoTry 文档一律放本仓；目录税则/命名/头部块/生命周期/可读性纪律与总索引见 `docs/README.md`。**双语纪律（2026-09-10 founder 拍板，loopx 约定）**：每篇文档成对维护——英文基座 `x.md` + 中文镜像 `x.zh-CN.md`（机器生成的 `CHANGELOG.md` 豁免）；改任何一侧必须同提交同步另一侧，**双语不一致视为 bug**；`node scripts/check-docs-i18n.mjs` 是机械校验，已接入 `run-all-tests.sh` 回归闸。**中文标点（硬性规则，2026-09-10 founder 拍板）**：中文文档散文一律用中文全角标点（，；：！？（）「」）——代码块、行内码、链接目标、HTML 标签、URL 与代码字面量（如 `node:sqlite`、`ok:false`、`[实时API:open-meteo]`）除外。
 - 状态同步纪律：只更新 `architecture.md` §11 所列且事实确实变化的专职权威面，其他文档保留短指针。把 issue 段落重复塞入 README、路线图、架构与历史设计属于文档缺陷。M-exit 提交在提交信息中附保鲜清单勾稽结果。
 - 红线进代码：动机画像无 evidence 拒绝落盘；wish pool 条目强制 conditions；写操作（预订/支付类工具）未来必须过 WriteGate（确认前不得实现任何直接写）。

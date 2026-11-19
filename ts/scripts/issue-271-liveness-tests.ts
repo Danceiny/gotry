@@ -30,7 +30,7 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const node24 = process.execPath
 const EXTERNAL_BOUND_MS = 8_000
 
-assert.equal(dshVersion, '0.2.0-rc.2', 'proof must run against the lock-selected installed dsh package')
+assert.equal(dshVersion, '0.2.2-rc.3', 'proof must run against the lock-selected installed dsh package')
 
 type CloseOutcome = { code: number | null; signal: NodeJS.Signals | null; error?: string }
 

@@ -179,7 +179,8 @@ for (const file of actual.filter((path) => /\.m?js$/.test(path))) {
 const plugin = await import(pathToFileURL(join(distRoot, 'src/index.js')).href)
 assert.equal(plugin.name, 'gotry-tools')
 assert.equal(typeof plugin.apply, 'function')
-assert.deepEqual(plugin.inject, ['tools', 'systemPrompt'])
+// dsh 0.2.2: benchmark isolation reads the agents registry at apply time.
+assert.deepEqual(plugin.inject, ['tools', 'systemPrompt', 'agents'])
 
 const skeleton = await import(pathToFileURL(join(distRoot, 'scripts/skeleton-check.js')).href)
 const connectivity = await skeleton.checkConnectivity('HKG', 'HKT')

@@ -1,5 +1,6 @@
 /** Bridge successful GoTry render results to DSH's native present/delivery protocol. */
 import type { Context } from '@deepseek-ai/cordis'
+import type { TurnBoundaryProjection } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tool-present/types'
 import type {} from '@deepseek-ai/dsh-tools'
 import { realpathSync, statSync } from 'node:fs'
@@ -13,7 +14,13 @@ export function registerArtifactDeliveries(ctx: Context): void {
     const value = result.value as { ok?: boolean; path?: unknown } | null
     const session = exec.agent?.session, cwd = session?.header.cwd
     if (!session || !cwd || !isAbsolute(cwd) || value?.ok !== true || typeof value.path !== 'string' || !isAbsolute(value.path)) return
-    const boundary = ctx.get('sessionProjections')?.stateOf(session, 'turnBoundary')
+    // dsh 0.2.2: the typed owner of the turn boundary is the AgentRegistry
+    // projection handle (ctx.agents.turnBoundaryOf); hosts without the agent
+    // service still expose the registry-level sessionProjections read, so
+    // fall back to it.
+    const agents = ctx.get('agents') as { turnBoundaryOf?: (session: unknown) => TurnBoundaryProjection } | undefined
+    const boundary = agents?.turnBoundaryOf?.(session)
+      ?? (ctx.get('sessionProjections') as { stateOf?: (session: unknown, key: string) => TurnBoundaryProjection | undefined } | undefined)?.stateOf?.(session, 'turnBoundary')
     if (!boundary || boundary.openTurnStartSeq === null) return
     try {
       const path = realpathSync(value.path), root = realpathSync(cwd), inside = relative(root, path)

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { apply as applyNativeToolExecutor, inject as nativeToolExecutorInject, name as nativeToolExecutorName } from '@deepseek-ai/dsh-tool-executor-native'
 import { LocalJobRegistry } from '@deepseek-ai/dsh-jobs-local'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { apply as applyJobs } from '@deepseek-ai/dsh-tool-jobs'
@@ -40,10 +41,15 @@ const oneShot: SubagentListEntry = {
 const ctx = new Context()
 await ctx.plugin(SystemPrompt)
 await ctx.plugin(ToolRuntime, {})
+// dsh 0.2.2: ToolRuntime.execute delegates to a registered executor; the bare
+// test composition must load the native one the real app boot requires.
+await ctx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
 await ctx.plugin(LocalJobRegistry, {})
 await ctx.inject(['tools', 'jobs'], () => applyJobs(ctx, {}))
 const removeSubagents = ctx.provide('subagents', {
-  listChildren: async (id: Agent['id'], _signal: AbortSignal) => {
+  // dsh 0.2.2: the runtime surface replaced listChildren with listDescendants;
+  // the guard filters to kind === 'child' rows, which these fixtures already are.
+  listDescendants: async (id: Agent['id'], _signal: AbortSignal) => {
     listedParents.push(String(id))
     return id === parentId ? [continuable, oneShot] : []
   },
@@ -57,14 +63,23 @@ const resultText = (result: { content: readonly unknown[] }): string => {
   if (!block || typeof block !== 'object' || !('text' in block)) return ''
   return typeof block.text === 'string' ? block.text : ''
 }
-const execute = (name: 'job_output' | 'job_kill', jobId: string, caller = agent) =>
-  ctx.tools.execute({
-    callId: `issue-194-${name}-${jobId}` as never,
-    name,
-    arguments: { job_id: jobId },
+// dsh 0.2.2: ToolRuntime.execute moved to the batch contract; settle the
+// single programmatic call like the previous per-call result.
+const execute = async (name: 'job_output' | 'job_kill', jobId: string, caller = agent) => {
+  const batch = await ctx.tools.execute({
+    calls: [{
+      type: 'tool-call',
+      id: `issue-194-${name}-${jobId}` as never,
+      name,
+      arguments: JSON.stringify({ job_id: jobId }),
+    }],
     agent: caller,
     signal: signal(),
   })
+  const settled = batch.results[0]?.result
+  if (!settled) throw new Error(`${name} produced no result`)
+  return settled
+}
 
 try {
   for (const name of ['job_output', 'job_kill'] as const) {
@@ -100,7 +115,7 @@ try {
   assert.deepEqual(listedParents, [parentId, parentId, parentId, parentId, unrelatedId])
 
   console.log(JSON.stringify({
-    dsh: '0.2.0-rc.2',
+    dsh: '0.2.2-rc.3',
     toolRuntime: 'real ToolRuntime + LocalJobRegistry + dsh-tool-jobs',
     guarded: ['job_output', 'job_kill'],
     durableId,

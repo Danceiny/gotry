@@ -33,12 +33,14 @@ import {
   LlmError,
   LlmRuntime,
   createUserMessage,
+  type BuiltinLlmFailureCode,
   type GenerateOptions,
   type ResolvedNormalRetryPolicy,
   type ResolvedRetryPolicy,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { apply as applyLlmRetry } from '@deepseek-ai/dsh-llm-retry'
+import { apply as applyNativeToolExecutor, inject as nativeToolExecutorInject, name as nativeToolExecutorName } from '@deepseek-ai/dsh-tool-executor-native'
 import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -135,7 +137,9 @@ class FixtureLlmAdapter extends LlmAdapter {
       if (!response.ok) {
         let error: { code?: string; message?: string; status?: number } = {}
         try { error = JSON.parse(body).error ?? {} } catch { /* preserve the HTTP status */ }
-        throw new LlmError(error.message ?? `fixture HTTP ${response.status}`, error.code ?? 'SERVER', { status: error.status ?? response.status })
+        // dsh 0.2.2 narrowed the code to BuiltinLlmFailureCode; the fixture's
+        // free-form JSON code is asserted into that union for the test path.
+        throw new LlmError(error.message ?? `fixture HTTP ${response.status}`, (error.code as BuiltinLlmFailureCode | undefined) ?? 'SERVER', { status: error.status ?? response.status })
       }
       yield { type: 'text-delta', index: 0, text: body.includes('[DONE]') ? 'fixture-ok' : body }
       yield { type: 'finish', reason: { kind: 'stop' } }
@@ -167,6 +171,9 @@ async function startWorld(sequence: readonly ResponseSpec[], policy: ResolvedNor
   await ctx.plugin(SessionProjection)
   await ctx.plugin(SystemPrompt, {})
   await ctx.plugin(ToolRuntime, {})
+  // dsh 0.2.2: an agent turn describes its tools through the selected executor
+  // before the first provider request; the bare composition must load one.
+  await ctx.plugin({ name: nativeToolExecutorName, inject: nativeToolExecutorInject, apply: applyNativeToolExecutor })
   await ctx.plugin(AgentRegistry)
   const adapter = new FixtureLlmAdapter(fixture.url, timeoutMs, policy)
   ctx.llm.registerAdapter(['fixture'], adapter)

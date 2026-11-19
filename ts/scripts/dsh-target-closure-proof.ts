@@ -35,32 +35,33 @@ import {
   validatePnpmRootDshImporter,
 } from './dsh-runtime-closure.ts'
 
-const TARGET_VERSION = '0.2.0-rc.2'
-const TARGET_PACKAGE_COUNT = 279
+const TARGET_VERSION = '0.2.2-rc.3'
+const TARGET_PACKAGE_COUNT = 337
 
 const ADDED_SENTINELS = [
-  '@deepseek-ai/dsh-api-workspace-files',
-  '@deepseek-ai/dsh-chunked-list',
-  '@deepseek-ai/dsh-client-file-upload',
-  '@deepseek-ai/dsh-client-resources',
-  '@deepseek-ai/dsh-client-ui-open-in-app',
-  '@deepseek-ai/dsh-client-ui-sidebar-documentpreview',
-  '@deepseek-ai/dsh-client-ui-sidebar-files',
-  '@deepseek-ai/dsh-client-ui-sidebar-right',
-  '@deepseek-ai/dsh-host-open-in-app',
-  '@deepseek-ai/dsh-http-proxy',
-  '@deepseek-ai/dsh-package-manifest',
-  '@deepseek-ai/dsh-session-format',
-  '@deepseek-ai/dsh-session-format-catalog',
-  '@deepseek-ai/dsh-session-format-v0-to-v1',
-  '@deepseek-ai/dsh-session-format-v1-to-v2',
-  '@deepseek-ai/dsh-session-format-v2-to-v3',
-  '@deepseek-ai/dsh-tool-present',
+  '@deepseek-ai/dsh-tool-executor-native',
+  '@deepseek-ai/dsh-tool-executor-ptc',
+  '@deepseek-ai/dsh-action-cards',
+  '@deepseek-ai/dsh-computer-use',
+  '@deepseek-ai/dsh-cua',
+  '@deepseek-ai/dsh-error',
+  '@deepseek-ai/dsh-harness-dev-context',
+  '@deepseek-ai/dsh-office-kit',
+  '@deepseek-ai/dsh-plugin-market',
+  '@deepseek-ai/dsh-working-directory',
 ] as const
 
 const REMOVED_SENTINELS = [
-  '@deepseek-ai/dsh-client-ui-sidebar-textpreview',
-  '@deepseek-ai/dsh-tool-subagent-report',
+  '@deepseek-ai/dsh-api-account-controller',
+  '@deepseek-ai/dsh-deepseek-account-platform',
+  '@deepseek-ai/dsh-experimental-agent-team',
+  '@deepseek-ai/dsh-experimental-agent-team-profile',
+  '@deepseek-ai/dsh-experimental-client-ui-agent-team',
+  '@deepseek-ai/dsh-experimental-schedule-bundle',
+  '@deepseek-ai/dsh-experimental-tool-agent-team',
+  '@deepseek-ai/dsh-invariants',
+  '@deepseek-ai/dsh-office-to-pdf',
+  '@deepseek-ai/dsh-subagent-in-process-driver',
 ] as const
 
 const repoRoot = join(import.meta.dirname, '..', '..')
@@ -207,11 +208,17 @@ for (const [key, entry] of Object.entries(tsLockPackages)) {
   assert.ok(!tsLockDshNames.has(pkgName), `ts lock 出现重复 dsh 条目:${pkgName}`)
   tsLockDshNames.add(pkgName)
 }
-assert.equal(
-  tsLockDshNames.size,
-  TARGET_PACKAGE_COUNT,
-  `ts lock dsh 包数不符:${tsLockDshNames.size}(expected ${TARGET_PACKAGE_COUNT})`,
-)
+// dsh 0.2.2: the ts dev graph reaches 329 of the 337 root closure members
+// (client-store/ui-primitives/ui-slots/hook-protocol/hooks-*/webhook* are
+// only reachable from the published root closure). The ts lock must stay an
+// exact-version subset of the root closure and keep every package ts itself
+// declares; count equality with the root is no longer the invariant.
+for (const name of tsLockDshNames) {
+  assert.ok(rootDshNames.includes(name), `ts lock 出现根闭包之外的 dsh 包:${name}`)
+}
+for (const name of dshDependencyNames(tsPkg.dependencies ?? {})) {
+  assert.ok(tsLockDshNames.has(name), `ts lock 缺失 ts 直赖 dsh 包:${name}`)
+}
 const rootDshNameSet = new Set(rootDshNames)
 for (const name of tsLockDshNames) {
   assert.ok(rootDshNameSet.has(name), `ts lock dsh 包不在根 232 集合中:${name}`)

@@ -275,6 +275,8 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string, gatewayLlmPlugi
 - id: fs-local\n  disabled: true\n\
 - id: persistent-bash\n  disabled: true\n\
 - id: persistent-pwsh\n  disabled: true\n\
+- id: tool-fs\n  disabled: true\n\
+- id: tool-working-directory\n  disabled: true\n\
 - id: str-replace-editor\n  disabled: true\n\
 - id: sessions\n  disabled: true\n\
 - id: system-prompt\n\

@@ -64,7 +64,7 @@ const SDK_VERSION = (require_(SDK_MANIFEST_PATH) as { version: string }).version
  * assertions describe one package instead of two.
  */
 const SDK_SOURCE_PATH = join(dirname(SDK_MANIFEST_PATH), 'lib', 'index.js')
-const EXPECTED_SDK_VERSION = '0.2.0-rc.2'
+const EXPECTED_SDK_VERSION = '0.2.2-rc.3'
 
 let pass = 0
 const failures: string[] = []

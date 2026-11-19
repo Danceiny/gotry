@@ -36,6 +36,8 @@ interface ProjectionSpec {
 interface MockCtx {
   on: (event: string, listener: MockListener) => () => void
   effect: (run: () => unknown, name?: string) => () => void
+  // dsh 0.2.2: recover() checks ctx.fiber.uid === null as its disposed test.
+  fiber: { uid: string | null }
   sessionProjections: {
     register: (spec: ProjectionSpec) => void
     stateOf: <T = unknown>(name: string) => T
@@ -75,8 +77,21 @@ function freshContext(): { ctx: MockCtx; listeners: Map<string, MockListener[]>;
     effect(_run, _name) {
       return () => undefined
     },
+    fiber: { uid: 'mock-fiber' },
     sessionProjections: {
-      register(s) { spec = s },
+      // dsh 0.2.2: apply() awaits register() for a projection handle whose
+      // stateOf(session) folds the session's own events with the registered spec.
+      register(s: ProjectionSpec) {
+        spec = s
+        return Promise.resolve({
+          stateOf: <T = unknown>(session: { events: Array<{ type: string; data: unknown }> }): T => {
+            if (!spec) return {} as T
+            let state: unknown = spec.init()
+            for (const ev of session.events) state = spec.apply(state, ev)
+            return state as T
+          },
+        })
+      },
       stateOf<T = unknown>(_name: string): T {
         if (!spec) return {} as T
         let state = spec.init()
