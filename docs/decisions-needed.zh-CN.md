@@ -8,7 +8,7 @@
 > 下游：按回执推进的实现/Exit 证据与 issue gate 更新；founder YES 只满足对应决策门，不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回；按回执推进。
 
-**速览：无在追事项；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
+**速览：ADR-27 无在追项——两项决策均于 2026-11-19 落定（鉴权器形态：绑定请求摘要的短时效签名断言，实装以「BFF 能签发」事实为前置；Litestream 引入：确认，§2 矩阵行定案，import 以事实 F-3 为前置）；ADR-27 整体已接受，运营验收等 UAT 演练；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
 
 ## 未决
 
@@ -34,6 +34,8 @@
 
 | # | 事项 | 决策 | 结算 |
 |---|---|---|---|
+| ADR-27 | AaaS Litestream 引入与复用矩阵修订 | **确认**：Litestream（Apache-2.0）作为 D-a 持久化 sidecar 引入——独立守护进程，绝不链接进 gotry 代码；§2 复用矩阵行定案；C1 成文修订（仅准入一类 sidecar）随本确认生效；retention 取已声明窗口形态，且恢复不得跨过 forget。import 本体以事实 F-3 为前置（hotelbyte S3 兼容存储的条件写语义、per-tenant per-epoch 路径）。同日鉴权器形态落定，ADR-27 整体就此接受 | ✅ 2026-11-19（founder 在 A3 车道回复拍板；决策正文：[ADR 展开](adr-expansions.zh-CN.md) §8.27） |
+| ADR-27 | AaaS 生产鉴权器形态 | **绑定请求摘要的短时效签名断言**，由 BFF 按组织签发（生产鉴权器上线前共享 bearer key 以过渡形态存续）。「BFF 能签发哪种断言格式」这一事实（[aaas-security-design](design/aaas-security-design.zh-CN.md) §6 开放问题）是 A3.1 的实装前置；若被证伪，本决定重开。mTLS 为被拒备选（接缝守卫等同，证书运维更重） | ✅ 2026-11-19（founder 在 A3 车道回复拍板；决策正文：[ADR 展开](adr-expansions.zh-CN.md) §8.27） |
 | #674 | AaaS A0 RFC（七个决策） | **按建议接受**：按租户 keyed 单写者（ADR-15 重新表述）；账本 owner 为个人；租约存储为 hotel-be MySQL、每租户一行；持久性 A3 之前用 D-a、AaaS 上启封 M5 之前须 D-b；专用内网层并新增边界 ADR；v1 范围为 `gotry-backend` 服务面；各节点现有的 `local` 账本只读归档、不迁移 | ✅ 2026-10-28（founder 合并 [#675](https://github.com/Danceiny/gotry/pull/675) 并指示 A1 开工） |
 | D-9 | dsh-calendar 分发面 | **默认不挂载**；挂载与否进 setup 状态面（`~/.gotry/calendar.json`，`npx @danceiny/gotry setup calendar` on/off），禁止环境变量控制产品行为（founder 2026-09-03 纠偏）；doctor 增宿主插件节 | ✅ 2026-09-03（ADR-25，run-all §50） |
 | D-8 | 工具编排策略 | **静态平铺 + 健康态驱动的动态建议**：工具面平铺不变、解译器不做隐藏派发；通道健康面 + verdict≠hit 时结果内注入 `routing` 顺位表（可用性>证据级>效率）；persona （19） 收缩为注册表生成片段 | ✅ 2026-09-03（同上） |

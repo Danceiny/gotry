@@ -92,6 +92,6 @@ The trust boundaries are: browser to BFF (hotel-be is the authority); BFF to the
 
 ## 6. Open questions
 
-- Which signed-assertion format the BFF can issue (A3 boundary ADR).
+- Which signed-assertion format the BFF can issue (A3 boundary ADR). Promoted to the A3.1 implementation precondition by the 2026-11-19 ADR-27 decision (the signed assertion was chosen); if it disproves, the form decision re-opens.
 - Whether the model provider isolates prompt caches per API key or workspace. That would make the cache label redundant, not harmful.
 - The production values of the planner ceilings, `maxOpenTenants` and the global turn cap, after probes of the real nodes ([capacity baseline](../ops/aaas-capacity-baseline.md)).

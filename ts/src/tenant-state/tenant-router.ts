@@ -32,7 +32,7 @@ import {
 import { DrainTimeoutError, FencedError, LeaseLostError, ReplicaAtCapacityError, RouterClosedError, TenantDrainingError } from './errors.ts'
 import { leaseKeyFor, tenantRootFor } from './ids.ts'
 import type { LeaseStore } from './lease-store.ts'
-import { systemMonotonicClock, TenantLease, type MonotonicClock } from './tenant-lease.ts'
+import { systemMonotonicClock, TenantLease, type FenceEvent, type MonotonicClock } from './tenant-lease.ts'
 
 // ---- guarded views ----------------------------------------------------------------
 
@@ -187,6 +187,17 @@ export interface TenantRouterOptions {
    */
   readonly maxOpenTenants?: number
   /**
+   * Releases a tenant that has had no activity for this long, by handing it off the ordinary way (drain, final
+   * snapshot, lease released), so its slot frees for a new tenant (docs/rfc/aaas-rfc.md §4.8(g): until idle release
+   * composes with tenant affinity, one organization with many users can fill the slots and every other new tenant is
+   * refused by that replica). Activity is work through the handle — `run`, `runAsync`, and any call on the guarded
+   * ledger. Work that is already running is never cut: the release waits for it as a handoff does, and a tenant whose
+   * idle handoff fails keeps serving and is tried again no sooner than after another full idle period. The injected
+   * monotonic clock decides; the timer behind it only wakes. Zero (the default) keeps the behavior §4.8(g) states:
+   * a slot is held until a handoff or the router closes.
+   */
+  readonly idleReleaseMs?: number
+  /**
    * The longest a handoff waits for calls that were already running (`runAsync`) to finish. The lease is renewed through the
    * drain, so a call that never returns would otherwise hold the tenant on this replica for ever and keep `close()` waiting. When
    * it passes, `handoff()` rejects with `DrainTimeoutError`, the tenant serves again and a `drain_timeout` event says so. Set it
@@ -196,6 +207,8 @@ export interface TenantRouterOptions {
   /** Tenants `close()` hands off at the same time, so that one stuck tenant does not hold the ones behind it. Default 8. */
   readonly closeConcurrency?: number
   readonly onEvent?: (event: RouterEvent) => void
+  /** Observes every refusal of a tenant's write gate, where the lease throws it. A broken observer never changes the outcome. */
+  readonly onFence?: (fence: FenceEvent) => void
 }
 
 export interface TenantHandle {
@@ -230,6 +243,8 @@ interface HandleDeps {
   readonly autoRenew: boolean
   readonly renewEveryMs: number
   readonly snapshotEveryMs: number
+  readonly idleReleaseMs: number
+  readonly clock: MonotonicClock
   readonly drainTimeoutMs: number
   emit(event: RouterEvent): void
   detach(handle: TenantHandle): void
@@ -267,6 +282,8 @@ class OpenTenant implements TenantHandle {
   private renewTimer: ReturnType<typeof setTimeout> | null = null
   private renewTicking = false
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
+  private lastActivityAt = 0
   private snapshotTail: Promise<unknown> = Promise.resolve()
   private snapshotQueued = 0
 
@@ -280,6 +297,7 @@ class OpenTenant implements TenantHandle {
     // Work that began before a handoff may finish and new work is refused at `run`; the view itself stays open while
     // the drain waits, so writes made in that time are in the final image, and closes when the image is taken.
     this.ledger = guardedLedger(this.raw, () => this.assertViewUsable())
+    this.lastActivityAt = deps.clock.nowMs()
   }
 
   isOpen(): boolean {
@@ -295,14 +313,24 @@ class OpenTenant implements TenantHandle {
     return this.state
   }
 
-  /** Called once by the router, after the handle is registered. */
+  /** Called once by the router, after the handle is registered — and again when a failed handoff resumes service. */
   begin(): void {
+    // A tenure (re)starts its idle period here: the first release attempt comes a full idle period after the
+    // open, and one after a handoff that failed comes no sooner than another full period after it resumed serving.
+    this.markActivity()
     this.scheduleRenewal()
     this.scheduleSnapshot()
+    // A fresh period, even where a stale timer armed while the tenant was draining is still pending.
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
+    }
+    this.scheduleIdleRelease()
   }
 
   run<T>(work: (ledger: StateLedger) => T): T {
     this.assertServing()
+    this.markActivity()
     const result = work(this.ledger)
     if (isThenable(result)) {
       // The callback is already running, and what is left of it is outside the lease bracket and the drain. Nobody awaits
@@ -317,13 +345,20 @@ class OpenTenant implements TenantHandle {
   async runAsync<T>(work: (ledger: StateLedger) => Promise<T>): Promise<T> {
     this.assertServing()
     this.inFlight += 1
+    this.markActivity()
     try {
       const result = await work(this.ledger)
       this.deps.lease.assertHeld()
       return result
     } finally {
       this.inFlight -= 1
-      if (this.inFlight === 0) this.wakeIdleWaiters()
+      if (this.inFlight === 0) {
+        // The work that kept the tenant busy is over: it counts as the last activity, and the idle release is
+        // armed again — a tick that saw the work running has left no timer of its own behind.
+        this.markActivity()
+        this.wakeIdleWaiters()
+        this.scheduleIdleRelease()
+      }
     }
   }
 
@@ -428,6 +463,7 @@ class OpenTenant implements TenantHandle {
   /** The gate of the ledger a consumer holds: the lease, and a view that is open only while the tenant is served or draining. */
   private assertViewUsable(): void {
     this.deps.lease.assertHeld()
+    this.markActivity()
     if (this.state !== 'serving' && this.state !== 'draining') throw new TenantDrainingError(this.deps.key)
   }
 
@@ -520,12 +556,42 @@ class OpenTenant implements TenantHandle {
   private stopTimers(): void {
     if (this.renewTimer) clearTimeout(this.renewTimer)
     this.renewTimer = null
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
     this.stopSnapshotTimer()
   }
 
   private stopSnapshotTimer(): void {
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer)
     this.snapshotTimer = null
+  }
+
+  /** The monotonic moment of the last work through the handle: `run`, `runAsync`, or a call on the guarded ledger. */
+  private markActivity(): void {
+    this.lastActivityAt = this.deps.clock.nowMs()
+  }
+
+  private scheduleIdleRelease(delayMs: number = this.deps.idleReleaseMs): void {
+    if (this.deps.idleReleaseMs <= 0 || this.state === 'closed' || this.state === 'forgetting' || this.idleTimer) return
+    this.idleTimer = setTimeout(() => { void this.idleTick() }, delayMs)
+    this.idleTimer.unref()
+  }
+
+  /**
+   * The wake of the idle-release timer. The injected clock decides whether the idle period really elapsed — the
+   * timer only woke, and may have fired early. Work that is running is never cut: its end re-arms the release.
+   * At an idle period's end the tenant is handed off the ordinary way; a handoff that fails keeps serving, and
+   * `begin` starts another full idle period before the next attempt.
+   */
+  private idleTick(): void {
+    this.idleTimer = null
+    if (this.state !== 'serving' || this.inFlight > 0) return
+    const remaining = this.deps.idleReleaseMs - (this.deps.clock.nowMs() - this.lastActivityAt)
+    if (remaining > 0) {
+      this.scheduleIdleRelease(remaining)
+      return
+    }
+    void this.handoff().catch(() => undefined)
   }
 
   private scheduleRenewal(): void {
@@ -583,6 +649,7 @@ export class TenantRouter {
     if (options.maxOpenTenants !== undefined && (!Number.isSafeInteger(options.maxOpenTenants) || options.maxOpenTenants < 1)) throw new RangeError('maxOpenTenants must be a positive integer')
     if (options.drainTimeoutMs !== undefined && (!Number.isSafeInteger(options.drainTimeoutMs) || options.drainTimeoutMs < 1 || options.drainTimeoutMs > MAX_TIMER_MS)) throw new RangeError(`drainTimeoutMs must be an integer within [1, ${MAX_TIMER_MS}]`)
     if (options.closeConcurrency !== undefined && (!Number.isSafeInteger(options.closeConcurrency) || options.closeConcurrency < 1)) throw new RangeError('closeConcurrency must be a positive integer')
+    if (options.idleReleaseMs !== undefined && (!Number.isSafeInteger(options.idleReleaseMs) || options.idleReleaseMs < 0 || options.idleReleaseMs > MAX_TIMER_MS)) throw new RangeError(`idleReleaseMs must be an integer within [0, ${MAX_TIMER_MS}]`)
     this.options = options
     this.clock = options.clock ?? systemMonotonicClock
   }
@@ -692,6 +759,7 @@ export class TenantRouter {
       ttlMs: options.ttlMs ?? DEFAULT_TTL_MS,
       marginMs: options.marginMs ?? DEFAULT_MARGIN_MS,
       clock: this.clock,
+      onFence: options.onFence,
     })
     emit({ type: 'acquired', key, epoch: lease.epoch })
     const context: EpochCopyContext = {
@@ -725,6 +793,8 @@ export class TenantRouter {
       autoRenew: options.autoRenew ?? true,
       renewEveryMs: options.renewEveryMs ?? Math.max(50, Math.floor(ttlMs / 3)),
       snapshotEveryMs: options.snapshotEveryMs ?? 0,
+      idleReleaseMs: options.idleReleaseMs ?? 0,
+      clock: this.clock,
       drainTimeoutMs: options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS,
       emit,
       detach: (gone) => { if (this.handles.get(key) === gone) this.handles.delete(key) },
