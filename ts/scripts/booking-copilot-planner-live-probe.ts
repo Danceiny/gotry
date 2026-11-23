@@ -16,9 +16,10 @@ import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import { createDshEmbeddedBookingPlanner, type DshPlannerTurnMetric } from '../src/booking-surface/dsh-planner.ts'
 
 const apiKey = process.env.DEEPSEEK_API_KEY
-const baseUrl = process.env.DEEPSEEK_BASE_URL ?? 'http://173.208.218.132:3000/v1'
+const baseUrl = process.env.DEEPSEEK_BASE_URL
 const model = process.env.DEEPSEEK_MODEL ?? 'deepseek-flash'
 if (!apiKey) throw new Error('DEEPSEEK_API_KEY required')
+if (!baseUrl) throw new Error('DEEPSEEK_BASE_URL required (the LLM gateway base URL, ending in /v1)')
 
 const contextRef = 'ctx-live-probe-1'
 const workspace: BookingWorkspaceSnapshot = {
